@@ -90,14 +90,9 @@ class MCPTests(unittest.TestCase):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools = await session.list_tools()
-                    placeholders = {
-                        'update_reply_draft', 'send_reply_draft',
-                    }
-                    self.assertEqual({tool.name for tool in tools.tools}, {'list_clients', 'list_conversations', 'get_conversation', 'read_attachment', 'create_reply_draft'} | placeholders)
-                    for name in sorted(placeholders):
-                        placeholder = await session.call_tool(name, {})
-                        self.assertFalse(placeholder.isError)
-                        self.assertEqual(json.loads(placeholder.content[0].text), {'status': 'not_implemented'})
+                    self.assertEqual({tool.name for tool in tools.tools}, {'list_clients', 'list_conversations', 'get_conversation', 'read_attachment', 'create_reply_draft', 'update_reply_draft', 'send_reply_draft'})
+                    send_tool = next(tool for tool in tools.tools if tool.name == 'send_reply_draft')
+                    self.assertEqual(set(send_tool.inputSchema['required']), {'client_id', 'email', 'draft_id'})
                     result = await session.call_tool('list_clients', {})
                     self.assertFalse(result.isError)
                     self.assertEqual([{k: row[k] for k in ('client_id', 'username')}

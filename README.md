@@ -1,6 +1,6 @@
 # Leadprogress MCP
 
-Minimalny serwer MCP: odczyty klientów, konwersacji i załączników tworzenie projektów oraz dwa puste narzędzia zapisu, lokalny transport stdio.
+Minimalny serwer MCP: odczyty klientów, konwersacji i załączników oraz tworzenie, edycja i wysyłka projektów odpowiedzi, lokalny transport stdio.
 Pierwszy odczyt loguje się przez `POST /login`. Kolejne narzędzia korzystają
 z tego samego klienta HTTP, puli połączeń i ciasteczka sesji.
 `get_json('/api/statistics')` odczytuje dane; po HTTP 401 lub przekierowaniu
@@ -53,14 +53,6 @@ Testy bez danych logowania i bez połączenia z produkcją:
 SDK: https://py.sdk.modelcontextprotocol.io/v1/
 
 
-## Puste narzędzia CRM
-
-`update_reply_draft` i `send_reply_draft` są na razie tylko zarejestrowanymi
-narzędziami bez parametrów. Każde zwraca `{"status": "not_implemented"}`.
-Nie logują się, nie odpytują API, nie zapisują danych ani nie wysyłają wiadomości.
-Parametry i implementacja zostaną dodane w kolejnych krokach.
-
-
 ## Odczyt załączników
 
 `read_attachment(client_id, email, attachment_id)` czyta ODT, PDF i DOCX.
@@ -103,3 +95,32 @@ Tworzenie i zapis treści to dwa osobne żądania. Nie są automatycznie ponawia
 Jeżeli drugi krok zawiedzie, komunikat zawiera ID już utworzonego projektu;
 należy sprawdzić go w CRM, zamiast tworzyć kolejny. Timeout oznacza nieznany
 wynik zapisu, a nie pewność, że operacja się nie wykonała.
+
+## Edycja projektu odpowiedzi
+
+`update_reply_draft(client_id, email, draft_id, subject=None, body=None,
+conversation_client_id=None, thread_id=None)` pobiera aktualny projekt z
+`pending_approvals` wskazanej rozmowy i sprawdza jego ID oraz adres odbiorcy.
+Przekaż temat i/lub treść; pominięte pole zachowuje aktualną wartość.
+Zapis nadpisuje oba pola tego samego projektu i zwraca `sent: false`.
+Backend usuwa skrajne białe znaki i aktualizuje czas edycji.
+Tool nie tworzy projektu, nie wysyła wiadomości i nie ponawia zapisu.
+Backend nie zapewnia kontroli wersji: równoczesna edycja w panelu może zostać nadpisana.
+
+## Wysyłka projektu odpowiedzi
+
+`send_reply_draft(client_id, email, draft_id, conversation_client_id=None, thread_id=None)`
+sprawdza obecność projektu w `pending_approvals` wskazanej rozmowy i niepusty temat
+oraz treść. Następnie wywołuje `POST /proxy/approve_message/{draft_id}` z ID
+właściciela rozmowy. Nie nadpisuje treści ani przypisania handlowca.
+Używaj wyłącznie na wyraźne polecenie wysłania konkretnego projektu.
+
+Backend wysyła aktualnie zapisaną treść i wszystkie dołączone do drafta pliki
+(ich lista nie jest jeszcze zwracana przez `get_conversation`). Po sukcesie
+przenosi wiadomość do historii i usuwa draft. Tool zwraca `status: "sent"`,
+`sent: true` oraz identyfikatory; nie oznacza to potwierdzenia doręczenia odbiorcy.
+
+Wysyłka nigdy nie jest automatycznie ponawiana. Timeout lub błąd może wystąpić
+już po przyjęciu maila przez SMTP, więc przed ponowną próbą należy sprawdzić CRM.
+Backend nie zapewnia atomowej kontroli wersji ani deduplikacji równoczesnych
+wysyłek. Edycja w panelu między sprawdzeniem a wysłaniem może zmienić wysyłaną treść.

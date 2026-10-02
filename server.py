@@ -338,15 +338,78 @@ def create_reply_draft(
 
 
 @mcp.tool()
-def update_reply_draft() -> dict:
-    """Not implemented. Changes nothing."""
-    return {'status': 'not_implemented'}
+def update_reply_draft(
+    client_id: int,
+    email: str,
+    draft_id: int,
+    subject: str | None = None,
+    body: str | None = None,
+    conversation_client_id: int | None = None,
+    thread_id: int | None = None,
+) -> dict:
+    """Update an unsent draft from get_conversation; omitted fields keep current values.
+    client_id: mailbox; conversation_client_id: owner if different.
+    Provide subject and/or body. Never sends mail or automatically retries writes."""
+    if draft_id <= 0:
+        raise ToolError('draft_id must be a positive integer.')
+    if subject is None and body is None:
+        raise ToolError('Provide subject and/or body.')
+    if subject is not None and (not subject.strip() or '\r' in subject or '\n' in subject):
+        raise ToolError('subject must not be empty or contain line breaks.')
+    if body is not None and not body.strip():
+        raise ToolError('body must not be empty.')
+    with _session_lock:
+        conversation = get_conversation(client_id, email, thread_id=thread_id,
+                                        conversation_client_id=conversation_client_id)
+        drafts = [row for row in conversation['pending_approvals'] if row.get('id') == draft_id]
+        if len(drafts) != 1 or drafts[0].get('email_address') != conversation['selected_email']:
+            raise ToolError('Draft is not present in the accessible conversation.')
+        draft = drafts[0]
+        values = {'subject': draft.get('subject') if subject is None else subject,
+                  'body': draft.get('body') if body is None else body}
+        if any(not isinstance(value, str) for value in values.values()):
+            raise ToolError('Draft has an invalid subject or body. Refresh the conversation.')
+        values = {key: value.strip() for key, value in values.items()}
+        _post_json(f'/proxy/save_message/{draft_id}', values, 'saved')
+    return {'status': 'draft_updated', 'draft_id': draft_id,
+            'mailbox_user_id': conversation['mailbox_user_id'],
+            'client_id': conversation['client_id'], 'email': conversation['selected_email'],
+            **values, 'sent': False}
 
 
 @mcp.tool()
-def send_reply_draft() -> dict:
-    """Not implemented. Sends nothing."""
-    return {'status': 'not_implemented'}
+def send_reply_draft(
+    client_id: int,
+    email: str,
+    draft_id: int,
+    conversation_client_id: int | None = None,
+    thread_id: int | None = None,
+) -> dict:
+    """Send an existing draft with its saved content and attached files.
+    client_id: mailbox; conversation_client_id: owner if different.
+    Requires explicit user intent to send. Never retries; check CRM after errors."""
+    if draft_id <= 0:
+        raise ToolError('draft_id must be a positive integer.')
+    with _session_lock:
+        conversation = get_conversation(client_id, email, thread_id=thread_id,
+                                        conversation_client_id=conversation_client_id)
+        drafts = [row for row in conversation['pending_approvals'] if row.get('id') == draft_id]
+        if len(drafts) != 1 or drafts[0].get('email_address') != conversation['selected_email']:
+            raise ToolError('Draft is not present in the accessible conversation.')
+        draft = drafts[0]
+        if any(not isinstance(draft.get(field), str) or not draft[field].strip()
+               for field in ('subject', 'body')):
+            raise ToolError('Draft subject and body must not be empty. Update the draft before sending.')
+        try:
+            _post_json(f'/proxy/approve_message/{draft_id}',
+                       {'client_id': conversation['client_id']}, 'sent')
+        except ToolError as exc:
+            raise ToolError(f'Sending draft {draft_id} was not confirmed. '
+                            f'Check CRM before retrying; the email may already have been sent. {exc}') from None
+    return {'status': 'sent', 'draft_id': draft_id,
+            'mailbox_user_id': conversation['mailbox_user_id'],
+            'client_id': conversation['client_id'], 'email': conversation['selected_email'],
+            'sent': True}
 
 
 if __name__ == '__main__':
