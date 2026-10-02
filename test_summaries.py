@@ -31,9 +31,9 @@ class SummaryTests(unittest.TestCase):
              'pending_question_count': 2},
             {'client_id': 2, 'email_address': 'a@example.com', 'bucket': 'terminated', 'stage': None},
         ]
-        with patch.object(server, 'list_conversations', return_value=rows) as read:
+        with patch.object(server, '_list_conversations', return_value=rows) as read:
             result = server.get_conversations_summary(27, 'company')
-        read.assert_called_once_with(27, 'company')
+        read.assert_called_once_with(27, 'company', None, None)
         self.assertEqual(result['total_rows'], 3)
         self.assertEqual(result['unique_contacts'], 2)
         self.assertEqual(result['by_bucket'], {'active': 1, 'storage': 1, 'terminated': 1})
@@ -42,11 +42,11 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result['rows_with_flags']['has_call'], 1)
 
     def test_empty_lists(self):
-        with patch.object(server, 'list_clients', return_value=[]):
+        with patch.object(server, '_list_clients', return_value=[]):
             result = server.get_clients_summary()
         self.assertEqual(result['total_clients'], 0)
         self.assertTrue(all(item['total'] == 0 for item in result['counters'].values()))
-        with patch.object(server, 'list_conversations', return_value=[]):
+        with patch.object(server, '_list_conversations', return_value=[]):
             result = server.get_conversations_summary(27)
         self.assertEqual(result['unique_contacts'], 0)
         self.assertEqual(result['by_bucket'], {'active': 0, 'storage': 0, 'terminated': 0})
@@ -62,7 +62,7 @@ class SummaryTests(unittest.TestCase):
 
     def test_bad_counters_do_not_produce_misleading_total(self):
         for value in (-1, '3', 1.5):
-            with patch.object(server, 'list_clients', return_value=[{'pending_questions': value}]):
+            with patch.object(server, '_list_clients', return_value=[{'pending_questions': value}]):
                 with self.assertRaisesRegex(ToolError, 'counter value'):
                     server.get_clients_summary()
 

@@ -170,7 +170,7 @@ class DownloadTests(unittest.TestCase):
 
     def test_missing_attachment_and_unsupported_format_never_download(self):
         for attachments in ([],[{'id':1,'filename':'test.exe'}]):
-            with patch('server.get_conversation',return_value={'timeline':[{'payload':{'attachments':attachments}}]}), \
+            with patch('server._get_conversation',return_value={'timeline':[{'payload':{'attachments':attachments}}]}), \
                  patch('server._download_attachment') as download:
                 with self.assertRaises(ToolError):
                     server.read_attachment(394,'test@example.com',1)

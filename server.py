@@ -1,4 +1,6 @@
 import atexit
+import hashlib
+import json
 import os
 from collections import Counter
 from pathlib import Path
@@ -89,8 +91,7 @@ def get_json(path: str):
             raise ToolError(f'{path} did not return valid JSON.') from None
 
 
-@mcp.tool()
-def list_clients() -> list[dict]:
+def _list_clients(query: str | None = None, salesman: str | None = None) -> list[dict]:
     """List active, running, unpaused Leadprogress clients and summary statistics."""
     data = get_json('/api/statistics')
     if not isinstance(data, dict) or any(
@@ -111,16 +112,20 @@ def list_clients() -> list[dict]:
         }
         for name, row in data.items()
         if row.get('in_progress') and row.get('is_active') and not row.get('is_paused')
+        and (not query or query.strip().casefold() in name.casefold())
+        and (not salesman or salesman.strip().casefold() == (row.get('salesman') or '').casefold())
     ]
 
 
-@mcp.tool()
-def list_conversations(client_id: int, query: str | None = None) -> list[dict]:
+def _list_conversations(client_id: int, query: str | None = None,
+                        bucket: str | None = None, stage: str | None = None) -> list[dict]:
     """List CRM contacts, statuses and counters for mailbox client_id, without history.
     Optional query searches email, phone, company and message text.
     Includes all buckets; returned client_id may identify another conversation owner."""
     if client_id <= 0:
         raise ToolError('client_id must be a positive integer.')
+    if bucket is not None and bucket not in ('active', 'storage', 'terminated'):
+        raise ToolError('bucket must be active, storage or terminated.')
     params = {'user_id': client_id, 'format': 'json'}
     if query and query.strip():
         params['q'] = query.strip()
@@ -137,7 +142,52 @@ def list_conversations(client_id: int, query: str | None = None) -> list[dict]:
         for row in conversations
     ):
         raise ToolError('Unexpected /crm conversation list format.')
-    return conversations
+    return [row for row in conversations
+            if (bucket is None or row.get('bucket') == bucket)
+            and (stage is None or (row.get('stage') or 'unknown') == stage)]
+
+
+def _validate_page(limit: int, offset: int = 0):
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ToolError('limit must be between 1 and 100.')
+    if type(offset) is not int or offset < 0:
+        raise ToolError('offset must be a non-negative integer.')
+
+
+def _page(rows: list[dict], limit: int, offset: int) -> dict:
+    items = rows[offset:offset + limit]
+    return {'total': len(rows), 'returned': len(items), 'items': items,
+            'next_offset': offset + len(items) if offset + len(items) < len(rows) else None}
+
+
+@mcp.tool()
+def list_clients(limit: int = 25, offset: int = 0,
+                 query: str | None = None, salesman: str | None = None) -> dict:
+    """List active, running, unpaused clients; client_id can be used as mailbox ID.
+    query: name substring; salesman: exact name, both case-insensitive.
+    Returns items, total after filters, returned, next_offset. limit 1-100 (default 25).
+    Pass next_offset as offset with unchanged filters; null means done. Use summary for counts."""
+    _validate_page(limit, offset)
+    rows = _list_clients(query, salesman)
+    rows.sort(key=lambda row: (row['username'].casefold(), row['client_id']))
+    return _page(rows, limit, offset)
+
+
+@mcp.tool()
+def list_conversations(client_id: int, query: str | None = None,
+                       bucket: str | None = None, stage: str | None = None,
+                       limit: int = 25, offset: int = 0) -> dict:
+    """List CRM contacts for mailbox client_id from list_clients or a CRM user_id URL.
+    query searches email/phone/company/text; bucket: active/storage/terminated;
+    stage: exact value or unknown (missing). Omit filters for all groups.
+    Returns items, total after filters, returned, next_offset; limit 1-100 (default 25).
+    Pass next_offset as offset with unchanged filters; null means done.
+    For chat tools use row.email_address as email and row.client_id as conversation_client_id."""
+    _validate_page(limit, offset)
+    rows = _list_conversations(client_id, query, bucket, stage)
+    rows.sort(key=lambda row: (row['client_id'], row['email_address'], row.get('bucket') or '',
+                               str(row.get('group_key') or ''), str(row.get('default_thread_id') or '')))
+    return _page(rows, limit, offset)
 
 
 def _counter_summary(rows: list[dict], fields: tuple[str, ...]) -> dict:
@@ -151,20 +201,24 @@ def _counter_summary(rows: list[dict], fields: tuple[str, ...]) -> dict:
 
 
 @mcp.tool()
-def get_clients_summary() -> dict:
-    """Count clients in list_clients and sum envelope, megaphone and phone counters.
-    rows_with_value counts clients with a positive counter; totals sum API values."""
-    rows = list_clients()
+def get_clients_summary(query: str | None = None, salesman: str | None = None) -> dict:
+    """Count ALL matching active, running, unpaused clients, independent of pagination.
+    query: name substring; salesman: exact name, both case-insensitive.
+    pending_questions=envelopes, pending_sales_call=megaphones, pending_sales_call_scheduled=phones.
+    Each counter has total (sum) and rows_with_value (clients with positive value)."""
+    rows = _list_clients(query, salesman)
     return {'total_clients': len(rows), 'counters': _counter_summary(rows, (
         'pending_questions', 'pending_sales_call', 'pending_sales_call_scheduled'))}
 
 
 @mcp.tool()
-def get_conversations_summary(client_id: int, query: str | None = None) -> dict:
-    """Summarize list_conversations, optionally filtered by query, without history.
-    Counts list rows by bucket/stage and unique (owner, email) contacts.
-    Counter totals sum rows; contact-wide counters may repeat across buckets."""
-    rows = list_conversations(client_id, query)
+def get_conversations_summary(client_id: int, query: str | None = None,
+                              bucket: str | None = None, stage: str | None = None) -> dict:
+    """Count ALL matching CRM list rows for mailbox client_id, independent of pagination.
+    Filters as list_conversations: query, bucket (active/storage/terminated), stage (unknown if missing).
+    Returns total_rows, unique_contacts (owner/email pairs), by_bucket, by_stage.
+    row_counters sum rows; contact-wide values may repeat across groups. Flags count rows, not events."""
+    rows = _list_conversations(client_id, query, bucket, stage)
     buckets = dict.fromkeys(('active', 'storage', 'terminated'), 0)
     buckets.update(Counter(row.get('bucket') or 'unknown' for row in rows))
     return {
@@ -181,8 +235,7 @@ def get_conversations_summary(client_id: int, query: str | None = None) -> dict:
     }
 
 
-@mcp.tool()
-def get_conversation(
+def _get_conversation(
     client_id: int,
     email: str,
     thread_id: int | None = None,
@@ -228,6 +281,44 @@ def get_conversation(
     return data
 
 
+@mcp.tool()
+def get_conversation(
+    client_id: int, email: str, thread_id: int | None = None,
+    bucket: str | None = None, conversation_client_id: int | None = None,
+    limit: int = 20, before: str | None = None,
+) -> dict:
+    """Read timeline messages/events/notes, all pending_approvals (drafts) and pending_questions.
+    client_id: mailbox; email: row.email_address; conversation_client_id: row.client_id from list_conversations.
+    thread_id: omit for contact history, 0 for unthreaded, positive ID from threads_for_selected_email.
+    bucket: active/storage/terminated; selects thread group, not history filter.
+    Latest 20 items by default (limit 1-100), oldest first within page. Pass timeline_page.next_before
+    as before with unchanged selection for older items; null means done. On stale cursor restart.
+    Attachment metadata is in timeline[].payload.attachments; file content and draft attachments excluded."""
+    _validate_page(limit)
+    data = _get_conversation(client_id, email, thread_id, bucket, conversation_client_id)
+    timeline = data['timeline']
+    scope = [client_id, email.strip(), thread_id, bucket, conversation_client_id,
+             data.get('selected_thread_id')]
+
+    def cursor(index):
+        value = json.dumps([scope, timeline[:index]], sort_keys=True, ensure_ascii=False)
+        return f'{index}:' + hashlib.sha256(value.encode('utf-8')).hexdigest()
+
+    end = len(timeline)
+    if before is not None:
+        try:
+            end = int(before.split(':', 1)[0])
+        except (ValueError, AttributeError):
+            raise ToolError('Invalid before cursor.') from None
+        if not 0 <= end <= len(timeline) or before != cursor(end):
+            raise ToolError('History or selection changed, or invalid cursor. Restart without before.')
+    start = max(0, end - limit)
+    return {**data, 'timeline': timeline[start:end], 'timeline_page': {
+        'total': len(timeline), 'returned': end - start,
+        'next_before': cursor(start) if start else None,
+    }}
+
+
 def _download_attachment(attachment_id: int) -> bytes:
     with _session_lock:
         try:
@@ -269,15 +360,15 @@ def read_attachment(
     thread_id: int | None = None,
     max_chars: int = 30_000,
 ) -> dict:
-    """Read ODT, PDF or DOCX text from an attachment listed in get_conversation.
-    client_id is the mailbox; conversation_client_id is its owner if different.
-    Checks conversation access; max 10 MiB, 100 PDF pages, max_chars up to 100000.
-    Plain text only, no OCR or draft attachments; reports truncation and missing text."""
+    """Extract ODT/PDF/DOCX text; attachment_id is timeline[].payload.attachments[].id from get_conversation.
+    Use the same mailbox client_id, email, conversation_client_id and optional thread_id as that chat.
+    Can read attachments from older pages. Max 10 MiB, first 100 PDF pages, max_chars 1-100000 (default 30000).
+    Returns text, truncated, warnings; no_text means no extractable text. No OCR/images or draft files."""
     if attachment_id <= 0:
         raise ToolError('attachment_id must be a positive integer.')
     if not 1 <= max_chars <= 100_000:
         raise ToolError('max_chars must be between 1 and 100_000.')
-    conversation = get_conversation(client_id, email, thread_id=thread_id,
+    conversation = _get_conversation(client_id, email, thread_id=thread_id,
                                     conversation_client_id=conversation_client_id)
     attachment = None
     for event in conversation['timeline']:
@@ -340,10 +431,11 @@ def create_reply_draft(
     thread_id: int | None = None,
     conversation_client_id: int | None = None,
 ) -> dict:
-    """Create and save an unsent reply draft for a listed CRM contact.
-    client_id: mailbox; conversation_client_id: owner if different.
-    thread_id: positive existing thread ID; omit to create a NEW thread (0 unsupported).
-    Requires subject and body. Never sends mail or automatically retries writes."""
+    """Create an unsent draft; return draft_id for update/send. Never sends mail.
+    client_id: mailbox; email: row.email_address; conversation_client_id: row.client_id from list_conversations.
+    thread_id: positive ID from get_conversation.threads_for_selected_email; omit to create a NEW thread (0 unsupported).
+    subject/body: nonempty plain text; no attachments. Writes are not retried.
+    On errors inspect CRM first; creation may succeed before content save fails."""
     if client_id <= 0 or (conversation_client_id is not None and conversation_client_id <= 0):
         raise ToolError('Client IDs must be positive integers.')
     email, subject, body = email.strip(), subject.strip(), body.strip()
@@ -355,11 +447,11 @@ def create_reply_draft(
         raise ToolError('Use a positive thread_id or omit it for a new thread; legacy thread 0 is unsupported.')
     owner_id = conversation_client_id if conversation_client_id is not None else client_id
     with _session_lock:
-        contacts = list_conversations(client_id)
+        contacts = _list_conversations(client_id)
         if not any(row['client_id'] == owner_id and row['email_address'] == email for row in contacts):
             raise ToolError('Contact is not present in the accessible CRM mailbox.')
         # Reuse CRM selection checks, including thread visibility and ownership.
-        get_conversation(client_id, email, thread_id=thread_id, conversation_client_id=owner_id)
+        _get_conversation(client_id, email, thread_id=thread_id, conversation_client_id=owner_id)
         created = _post_json('/proxy/create_draft', {
             'client_id': owner_id, 'sales_user_id': client_id,
             'email_address': email, 'thread_id': thread_id,
@@ -389,9 +481,10 @@ def update_reply_draft(
     conversation_client_id: int | None = None,
     thread_id: int | None = None,
 ) -> dict:
-    """Update an unsent draft from get_conversation; omitted fields keep current values.
-    client_id: mailbox; conversation_client_id: owner if different.
-    Provide subject and/or body. Never sends mail or automatically retries writes."""
+    """Update draft_id from get_conversation.pending_approvals[].id; never sends mail.
+    Use the same mailbox client_id, email, conversation_client_id and optional thread_id as that chat.
+    Provide nonempty subject and/or body; supplied fields replace text, omitted fields keep current values.
+    Returns saved subject/body. Writes are not retried; after errors inspect CRM before retrying."""
     if draft_id <= 0:
         raise ToolError('draft_id must be a positive integer.')
     if subject is None and body is None:
@@ -401,7 +494,7 @@ def update_reply_draft(
     if body is not None and not body.strip():
         raise ToolError('body must not be empty.')
     with _session_lock:
-        conversation = get_conversation(client_id, email, thread_id=thread_id,
+        conversation = _get_conversation(client_id, email, thread_id=thread_id,
                                         conversation_client_id=conversation_client_id)
         drafts = [row for row in conversation['pending_approvals'] if row.get('id') == draft_id]
         if len(drafts) != 1 or drafts[0].get('email_address') != conversation['selected_email']:
@@ -427,13 +520,14 @@ def send_reply_draft(
     conversation_client_id: int | None = None,
     thread_id: int | None = None,
 ) -> dict:
-    """Send an existing draft with its saved content and attached files.
-    client_id: mailbox; conversation_client_id: owner if different.
-    Requires explicit user intent to send. Never retries; check CRM after errors."""
+    """Send draft_id from get_conversation.pending_approvals[].id with current saved content and all attached files.
+    Use the same mailbox client_id, email, conversation_client_id and optional thread_id as that chat.
+    Requires explicit user intent to send. Success returns sent=true; backend removes draft and adds history.
+    Never retry automatically: after errors check CRM, as mail may already be sent. sent is not delivery confirmation."""
     if draft_id <= 0:
         raise ToolError('draft_id must be a positive integer.')
     with _session_lock:
-        conversation = get_conversation(client_id, email, thread_id=thread_id,
+        conversation = _get_conversation(client_id, email, thread_id=thread_id,
                                         conversation_client_id=conversation_client_id)
         drafts = [row for row in conversation['pending_approvals'] if row.get('id') == draft_id]
         if len(drafts) != 1 or drafts[0].get('email_address') != conversation['selected_email']:

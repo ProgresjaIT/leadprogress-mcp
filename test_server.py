@@ -96,7 +96,7 @@ class MCPTests(unittest.TestCase):
                     result = await session.call_tool('list_clients', {})
                     self.assertFalse(result.isError)
                     self.assertEqual([{k: row[k] for k in ('client_id', 'username')}
-                                      for row in result.structuredContent['result']],
+                                      for row in json.loads(result.content[0].text)['items']],
                         [{'client_id': 12, 'username': 'Klient A'}, {'client_id': 7, 'username': 'Klient B'}])
         asyncio.run(asyncio.wait_for(run(), 30))
         self.assertEqual(FakePanel.requests, [('POST', '/login'), ('GET', '/api/statistics')])
@@ -117,7 +117,7 @@ class MCPTests(unittest.TestCase):
                 server.list_clients()
                 FakePanel.expire_count = 1
                 FakePanel.expire_status = status
-                self.assertEqual(len(server.list_clients()), 2)
+                self.assertEqual(len(server.list_clients()['items']), 2)
                 self.assertEqual(FakePanel.requests.count(('POST', '/login')), 2)
                 self.assertEqual(FakePanel.requests.count(('GET', '/api/statistics')), 3)
 
@@ -136,7 +136,7 @@ class MCPTests(unittest.TestCase):
             'Inactive': {**base, 'is_active': False},
             'Stopped': {**base, 'in_progress': False},
         }
-        result = server.list_clients()
+        result = server.list_clients()['items']
         self.assertEqual([row['username'] for row in result], ['Running'])
         self.assertEqual(result[0]['description'], 'Printing')
         self.assertNotIn('imap_pass', result[0])
@@ -147,7 +147,7 @@ class MCPTests(unittest.TestCase):
             server.list_clients()
         self.assertIsNone(server._client)
         FakePanel.login_ok = True
-        self.assertEqual(len(server.list_clients()), 2)
+        self.assertEqual(len(server.list_clients()['items']), 2)
 
     def test_bad_login_stops_before_statistics(self):
         FakePanel.login_ok = False
@@ -163,7 +163,7 @@ class MCPTests(unittest.TestCase):
 
     def test_empty_statistics(self):
         FakePanel.payload = {}
-        self.assertEqual(server.list_clients(), [])
+        self.assertEqual(server.list_clients()['items'], [])
 
     def test_invalid_statistics(self):
         FakePanel.payload = {'error': 'failure'}

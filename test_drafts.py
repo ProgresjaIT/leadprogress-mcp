@@ -79,6 +79,13 @@ class CreateDraftTests(unittest.TestCase):
             self.create()
         self.assertEqual(self.writes(),[])
 
+    def test_contact_beyond_first_page_can_create_draft(self):
+        self.rows = [{'client_id': 394, 'email_address': f'a{i}@example.com'}
+                     for i in range(30)] + self.rows
+        result = self.create()
+        self.assertEqual(result['draft_id'], 81)
+        self.assertEqual(len(self.writes()), 2)
+
     def test_invalid_thread_never_written(self):
         self.hidden_thread=True
         with self.assertRaisesRegex(ToolError,'requested thread'):

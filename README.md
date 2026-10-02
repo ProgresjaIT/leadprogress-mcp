@@ -8,12 +8,12 @@ na `/login` odnawia sesję i ponawia GET tylko raz. HTTP 403 nie ponawia logowan
 Wspólna blokada chroni sesję przed równoczesnym logowaniem. Klient zamyka się
 przy zakończeniu procesu. Zmiana `.env` wymaga restartu serwera MCP.
 
-`list_clients` zwraca wyłącznie aktywnych, uruchomionych i niewstrzymanych klientów:
+`list_clients` zwraca stronę wyłącznie aktywnych, uruchomionych i niewstrzymanych klientów w `items`:
 `client_id`, `username`, `description`, `client_type`, `salesman`, `sent_total`,
-`interested_total`, `hasUncheckedErrors`, w kolejności z API.
+`interested_total`, `hasUncheckedErrors` oraz liczniki ikon, w kolejności nazwy i ID.
 Nowe narzędzia odczytujące API mogą wywoływać `get_json('/api/...')`.
 
-Pusta odpowiedź API daje `[]` (może również oznaczać brak cache statystyk w aplikacji).
+Pusta odpowiedź API daje `items: []` i `total: 0` (może również oznaczać brak cache statystyk w aplikacji).
 Wymagane konto administratora albo operatora; zakres klientów ustala aplikacja.
 
 ## Uruchomienie (Python 3.10+ / PowerShell)
@@ -55,14 +55,14 @@ SDK: https://py.sdk.modelcontextprotocol.io/v1/
 
 ## Liczniki
 
-`get_clients_summary()` używa dokładnie zakresu `list_clients`: aktywni,
+`get_clients_summary(query=None, salesman=None)` używa dokładnie zakresu `list_clients`: aktywni,
 uruchomieni i niewstrzymani klienci. Zwraca `total_clients` oraz dla każdego
 licznika `total` (sumę) i `rows_with_value` (liczbę klientów z wartością > 0).
 Mapowanie ikon: `pending_questions` = koperta, `pending_sales_call` = megafon,
 `pending_sales_call_scheduled` = telefon. Są to sumy wartości API, nie liczba
 unikalnych zdarzeń między różnymi skrzynkami.
 
-`get_conversations_summary(client_id, query=None)` używa `list_conversations`
+`get_conversations_summary(client_id, query=None, bucket=None, stage=None)` używa tego samego zakresu co `list_conversations`
 wraz z jego wyszukiwaniem i kontrolą dostępu. Zwraca `total_rows`,
 `unique_contacts` (unikalne pary właściciel + adres email), liczby pozycji
 `by_bucket` i `by_stage` oraz `row_counters` i `rows_with_flags`.
@@ -72,7 +72,36 @@ Flagi rozmów telefonicznych liczą oznaczone pozycje, nie liczbę zdarzeń.
 
 Oba narzędzia wykonują po jednym odczycie listy i zwracają wyłącznie agregaty.
 Nie pobierają historii rozmów. Obliczenia odbywają się w MCP, bez zmian aplikacji
-i bez paginacji. Pusta lista daje zera; ograniczenia źródłowego API nadal obowiązują.
+i obejmują cały przefiltrowany zbiór, niezależnie od paginacji list.
+Pusta lista daje zera; ograniczenia źródłowego API nadal obowiązują.
+
+## Paginacja
+
+`list_clients(limit=25, offset=0, query=None, salesman=None)` filtruje po fragmencie
+nazwy i dokładnej nazwie handlowca, bez rozróżniania wielkości liter.
+`list_conversations(client_id, query=None, bucket=None, stage=None, limit=25, offset=0)`
+filtruje po wyszukiwaniu CRM, grupie (`active`, `storage`, `terminated`) i etapie.
+`stage="unknown"` wybiera brak etapu. Filtry działają przed paginacją.
+
+Obie listy zwracają teraz obiekt `total`, `returned`, `items`, `next_offset`
+zamiast samej tablicy. `total` to liczba wszystkich pasujących pozycji.
+Przekaż `next_offset` z tymi samymi filtrami; `null` oznacza koniec.
+Limit wynosi 1–100, offset minimum 0. Rozmowy mają stałą kolejność według
+właściciela, adresu, grupy i identyfikatorów grupowania, a nie aktywności.
+Strony nie są snapshotem: dodanie/usunięcie kontaktów lub zmiana filtrujących
+pól między wywołaniami może przesunąć pozycje.
+
+`get_conversation(..., limit=20, before=None)` zwraca ostatnie elementy `timeline`
+(wiadomości, eventy i notatki), w kolejności aplikacji od starszych do nowszych.
+`timeline_page` zawiera `total`, `returned` i `next_before`. Aby pobrać starsze
+elementy, przekaż `next_before` jako `before`, zachowując parametry wyboru rozmowy.
+Kursor toleruje dopisanie nowej historii na końcu; zmiana wcześniejszych elementów
+lub wybór innej rozmowy powoduje błąd i wymaga rozpoczęcia od pierwszej strony.
+Drafty, pytania i pozostałe metadane pozostają kompletne na każdej stronie.
+
+MCP nadal pobiera pełne dane z aplikacji, lecz zwraca modelowi tylko stronę.
+Wewnętrzne odczyty dla liczników, załączników, tworzenia, edycji i wysyłania
+draftów korzystają z pełnych danych i nie zależą od limitów publicznych tooli.
 
 ## Odczyt załączników
 
