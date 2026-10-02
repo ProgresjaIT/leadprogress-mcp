@@ -90,7 +90,7 @@ class MCPTests(unittest.TestCase):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools = await session.list_tools()
-                    self.assertEqual({tool.name for tool in tools.tools}, {'list_clients', 'list_conversations', 'get_conversation', 'read_attachment', 'create_reply_draft', 'update_reply_draft', 'send_reply_draft'})
+                    self.assertEqual({tool.name for tool in tools.tools}, {'list_clients', 'list_conversations', 'get_conversation', 'read_attachment', 'create_reply_draft', 'update_reply_draft', 'send_reply_draft', 'get_clients_summary', 'get_conversations_summary'})
                     send_tool = next(tool for tool in tools.tools if tool.name == 'send_reply_draft')
                     self.assertEqual(set(send_tool.inputSchema['required']), {'client_id', 'email', 'draft_id'})
                     result = await session.call_tool('list_clients', {})

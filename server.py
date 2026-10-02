@@ -1,5 +1,6 @@
 import atexit
 import os
+from collections import Counter
 from pathlib import Path
 from threading import RLock
 from urllib.parse import urljoin, urlparse
@@ -137,6 +138,47 @@ def list_conversations(client_id: int, query: str | None = None) -> list[dict]:
     ):
         raise ToolError('Unexpected /crm conversation list format.')
     return conversations
+
+
+def _counter_summary(rows: list[dict], fields: tuple[str, ...]) -> dict:
+    result = {}
+    for field in fields:
+        values = [row.get(field) or 0 for row in rows]
+        if any(type(value) is not int or value < 0 for value in values):
+            raise ToolError(f'Unexpected counter value: {field}.')
+        result[field] = {'total': sum(values), 'rows_with_value': sum(value > 0 for value in values)}
+    return result
+
+
+@mcp.tool()
+def get_clients_summary() -> dict:
+    """Count clients in list_clients and sum envelope, megaphone and phone counters.
+    rows_with_value counts clients with a positive counter; totals sum API values."""
+    rows = list_clients()
+    return {'total_clients': len(rows), 'counters': _counter_summary(rows, (
+        'pending_questions', 'pending_sales_call', 'pending_sales_call_scheduled'))}
+
+
+@mcp.tool()
+def get_conversations_summary(client_id: int, query: str | None = None) -> dict:
+    """Summarize list_conversations, optionally filtered by query, without history.
+    Counts list rows by bucket/stage and unique (owner, email) contacts.
+    Counter totals sum rows; contact-wide counters may repeat across buckets."""
+    rows = list_conversations(client_id, query)
+    buckets = dict.fromkeys(('active', 'storage', 'terminated'), 0)
+    buckets.update(Counter(row.get('bucket') or 'unknown' for row in rows))
+    return {
+        'mailbox_user_id': client_id,
+        'query': query.strip() if query and query.strip() else None,
+        'total_rows': len(rows),
+        'unique_contacts': len({(row['client_id'], row['email_address']) for row in rows}),
+        'by_bucket': buckets,
+        'by_stage': dict(Counter(row.get('stage') or 'unknown' for row in rows)),
+        'row_counters': _counter_summary(rows, (
+            'pending_envelope_count', 'pending_question_count', 'unprocessed_count')),
+        'rows_with_flags': {field: sum(bool(row.get(field)) for row in rows)
+                            for field in ('has_call', 'has_call_scheduled', 'is_important')},
+    }
 
 
 @mcp.tool()

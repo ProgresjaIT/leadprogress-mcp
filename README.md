@@ -53,6 +53,27 @@ Testy bez danych logowania i bez połączenia z produkcją:
 SDK: https://py.sdk.modelcontextprotocol.io/v1/
 
 
+## Liczniki
+
+`get_clients_summary()` używa dokładnie zakresu `list_clients`: aktywni,
+uruchomieni i niewstrzymani klienci. Zwraca `total_clients` oraz dla każdego
+licznika `total` (sumę) i `rows_with_value` (liczbę klientów z wartością > 0).
+Mapowanie ikon: `pending_questions` = koperta, `pending_sales_call` = megafon,
+`pending_sales_call_scheduled` = telefon. Są to sumy wartości API, nie liczba
+unikalnych zdarzeń między różnymi skrzynkami.
+
+`get_conversations_summary(client_id, query=None)` używa `list_conversations`
+wraz z jego wyszukiwaniem i kontrolą dostępu. Zwraca `total_rows`,
+`unique_contacts` (unikalne pary właściciel + adres email), liczby pozycji
+`by_bucket` i `by_stage` oraz `row_counters` i `rows_with_flags`.
+Brak etapu/grupy trafia do `unknown`. Sumy liczników dotyczą pozycji listy:
+wartości przypisane do kontaktu mogą powtarzać się w kilku grupach.
+Flagi rozmów telefonicznych liczą oznaczone pozycje, nie liczbę zdarzeń.
+
+Oba narzędzia wykonują po jednym odczycie listy i zwracają wyłącznie agregaty.
+Nie pobierają historii rozmów. Obliczenia odbywają się w MCP, bez zmian aplikacji
+i bez paginacji. Pusta lista daje zera; ograniczenia źródłowego API nadal obowiązują.
+
 ## Odczyt załączników
 
 `read_attachment(client_id, email, attachment_id)` czyta ODT, PDF i DOCX.
