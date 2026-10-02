@@ -1,0 +1,356 @@
+import atexit
+import os
+from pathlib import Path
+from threading import RLock
+from urllib.parse import urljoin, urlparse
+
+import httpx
+from attachments import AttachmentError, MAX_FILE_BYTES, extract_attachment, file_format
+from dotenv import load_dotenv
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+
+load_dotenv(Path(__file__).with_name('.env'))
+mcp = FastMCP('Leadprogress')
+_client: httpx.Client | None = None
+_session_lock = RLock()
+
+
+def close_session():
+    """Close the shared HTTP client when the server exits."""
+    global _client
+    with _session_lock:
+        if _client is not None:
+            _client.close()
+            _client = None
+
+
+atexit.register(close_session)
+
+
+def login() -> httpx.Client:
+    """Return the shared authenticated client; log in only when needed."""
+    global _client
+    with _session_lock:
+        if _client is not None:
+            return _client
+        url = os.getenv('LEADPROGRESS_URL', '').rstrip('/')
+        username = os.getenv('LEADPROGRESS_USERNAME', '')
+        password = os.getenv('LEADPROGRESS_PASSWORD', '')
+        if not all((url, username, password)):
+            raise ToolError('Set LEADPROGRESS_URL, LEADPROGRESS_USERNAME and LEADPROGRESS_PASSWORD.')
+        parsed = urlparse(url)
+        local_http = parsed.scheme == 'http' and parsed.hostname in ('localhost', '127.0.0.1', '::1')
+        if (not parsed.hostname or (parsed.scheme != 'https' and not local_http)
+                or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment):
+            raise ToolError('LEADPROGRESS_URL must be an HTTPS origin (HTTP allowed for localhost).')
+
+        client = httpx.Client(base_url=url, timeout=30, follow_redirects=False)
+        try:
+            response = client.post('/login', data={'username': username, 'password': password})
+            if response.status_code != 302 or not client.cookies:
+                raise ToolError('Login failed. Check the configured account credentials.')
+        except Exception:
+            client.close()
+            raise
+        _client = client
+        return client
+
+
+def get_json(path: str):
+    """Read a panel endpoint, retrying once after an expired login session."""
+    if not path.startswith('/') or path.startswith('//') or '\\' in path:
+        raise ValueError('Use an absolute panel path, e.g. /api/statistics.')
+    with _session_lock:
+        try:
+            for attempt in range(2):
+                client = login()
+                response = client.get(path, headers={'Accept': 'application/json'})
+                target = urlparse(urljoin(str(response.url), response.headers.get('Location', '')))
+                origin = urlparse(str(client.base_url))
+                expired = response.status_code == 401 or (
+                    response.status_code in (302, 303)
+                    and (target.scheme, target.netloc, target.path) == (origin.scheme, origin.netloc, '/login')
+                )
+                if expired:
+                    close_session()
+                    if attempt == 0:
+                        continue
+                    raise ToolError('Session rejected after login. Check account permissions.')
+                if response.status_code == 403:
+                    raise ToolError('Access denied. Use an administrator or operator account.')
+                if response.status_code != 200:
+                    raise ToolError(f'{path} returned HTTP {response.status_code}.')
+                return response.json()
+        except httpx.RequestError:
+            raise ToolError('Cannot connect to Leadprogress. Check the URL and network.') from None
+        except ValueError:
+            raise ToolError(f'{path} did not return valid JSON.') from None
+
+
+@mcp.tool()
+def list_clients() -> list[dict]:
+    """List active, running, unpaused Leadprogress clients and summary statistics."""
+    data = get_json('/api/statistics')
+    if not isinstance(data, dict) or any(
+        not isinstance(row, dict) or type(row.get('client_id')) is not int
+        for row in data.values()
+    ):
+        raise ToolError('Unexpected /api/statistics response format.')
+    fields = (
+        'description', 'client_type', 'salesman',
+        'sent_total', 'interested_total', 'hasUncheckedErrors',
+        'pending_questions', 'pending_sales_call', 'pending_sales_call_scheduled',
+    )
+    return [
+        {
+            'client_id': row['client_id'],
+            'username': name,
+            **{field: row.get(field) for field in fields},
+        }
+        for name, row in data.items()
+        if row.get('in_progress') and row.get('is_active') and not row.get('is_paused')
+    ]
+
+
+@mcp.tool()
+def list_conversations(client_id: int, query: str | None = None) -> list[dict]:
+    """List CRM contacts, statuses and counters for mailbox client_id, without history.
+    Optional query searches email, phone, company and message text.
+    Includes all buckets; returned client_id may identify another conversation owner."""
+    if client_id <= 0:
+        raise ToolError('client_id must be a positive integer.')
+    params = {'user_id': client_id, 'format': 'json'}
+    if query and query.strip():
+        params['q'] = query.strip()
+    data = get_json('/crm?' + str(httpx.QueryParams(params)))
+    if not isinstance(data, dict) or data.get('status') != 'ok':
+        raise ToolError('Unexpected /crm response format.')
+    if data.get('mailbox_user_id') != client_id:
+        raise ToolError('CRM returned a different mailbox. Check account permissions.')
+    conversations = data.get('conversations_by_email')
+    if not isinstance(conversations, list) or any(
+        not isinstance(row, dict)
+        or type(row.get('client_id')) is not int
+        or not isinstance(row.get('email_address'), str)
+        for row in conversations
+    ):
+        raise ToolError('Unexpected /crm conversation list format.')
+    return conversations
+
+
+@mcp.tool()
+def get_conversation(
+    client_id: int,
+    email: str,
+    thread_id: int | None = None,
+    bucket: str | None = None,
+    conversation_client_id: int | None = None,
+) -> dict:
+    """Read messages, events, notes, unsent drafts and AI questions.
+    client_id: mailbox; email: email_address from list_conversations.
+    conversation_client_id: row's client_id when different from mailbox.
+    thread_id: omit for contact history, 0 for unthreaded, otherwise thread ID.
+    bucket: active/storage/terminated; selects thread group, not history filter.
+    Includes message attachment metadata; excludes files and draft attachments."""
+    if client_id <= 0 or (conversation_client_id is not None and conversation_client_id <= 0):
+        raise ToolError('Client IDs must be positive integers.')
+    email = email.strip()
+    if not email:
+        raise ToolError('email must not be empty; use email_address from list_conversations.')
+    if thread_id is not None and thread_id < 0:
+        raise ToolError('thread_id must be non-negative (0 means no thread).')
+    if bucket is not None and bucket not in ('active', 'storage', 'terminated'):
+        raise ToolError('bucket must be active, storage or terminated.')
+
+    params = {'user_id': client_id, 'email': email, 'format': 'json'}
+    for name, value in (('thread_id', thread_id), ('bucket', bucket),
+                        ('conversation_client_id', conversation_client_id)):
+        if value is not None:
+            params[name] = value
+    data = get_json('/crm/partial/chat?' + str(httpx.QueryParams(params)))
+    if not isinstance(data, dict) or data.get('status') != 'ok':
+        raise ToolError('Unexpected CRM chat response format.')
+    if data.get('mailbox_user_id') != client_id:
+        raise ToolError('CRM returned a different mailbox. Check account permissions.')
+    expected_client_id = conversation_client_id if conversation_client_id is not None else client_id
+    if (data.get('client_id') != expected_client_id
+            or data.get('active_client_id') != expected_client_id
+            or data.get('selected_email') != email):
+        raise ToolError('CRM did not select the requested conversation. Check identifiers and permissions.')
+    if thread_id is not None and data.get('selected_thread_id') != thread_id:
+        raise ToolError('CRM did not select the requested thread. Refresh the conversation and choose an available thread.')
+    for field in ('timeline', 'threads_for_selected_email', 'pending_approvals', 'pending_questions'):
+        if not isinstance(data.get(field), list) or any(not isinstance(item, dict) for item in data[field]):
+            raise ToolError(f'Unexpected CRM chat field: {field}.')
+    return data
+
+
+def _download_attachment(attachment_id: int) -> bytes:
+    with _session_lock:
+        try:
+            for attempt in range(2):
+                client = login()
+                with client.stream('GET', f'/proxy/attachment/{attachment_id}/download') as response:
+                    target = urlparse(urljoin(str(response.url), response.headers.get('Location', '')))
+                    origin = urlparse(str(client.base_url))
+                    expired = response.status_code == 401 or (
+                        response.status_code in (302, 303)
+                        and (target.scheme, target.netloc, target.path) == (origin.scheme, origin.netloc, '/login')
+                    )
+                    if expired:
+                        close_session()
+                        if attempt == 0:
+                            continue
+                        raise ToolError('Attachment access rejected after login.')
+                    if response.status_code != 200:
+                        raise ToolError(f'Attachment download returned HTTP {response.status_code}.')
+                    length = response.headers.get('Content-Length', '')
+                    if length.isdigit() and int(length) > MAX_FILE_BYTES:
+                        raise ToolError(f'Attachment exceeds the {MAX_FILE_BYTES / (1024**2):.1f} MiB limit.')
+                    data = bytearray()
+                    for chunk in response.iter_bytes(65536):
+                        if len(data) + len(chunk) > MAX_FILE_BYTES:
+                            raise ToolError(f'Attachment exceeds the {MAX_FILE_BYTES / (1024**2):.1f} MiB limit.')
+                        data.extend(chunk)
+                    return bytes(data)
+        except httpx.RequestError:
+            raise ToolError('Cannot download attachment. Check the connection to Leadprogress.') from None
+
+
+@mcp.tool()
+def read_attachment(
+    client_id: int,
+    email: str,
+    attachment_id: int,
+    conversation_client_id: int | None = None,
+    thread_id: int | None = None,
+    max_chars: int = 30_000,
+) -> dict:
+    """Read ODT, PDF or DOCX text from an attachment listed in get_conversation.
+    client_id is the mailbox; conversation_client_id is its owner if different.
+    Checks conversation access; max 10 MiB, 100 PDF pages, max_chars up to 100000.
+    Plain text only, no OCR or draft attachments; reports truncation and missing text."""
+    if attachment_id <= 0:
+        raise ToolError('attachment_id must be a positive integer.')
+    if not 1 <= max_chars <= 100_000:
+        raise ToolError('max_chars must be between 1 and 100_000.')
+    conversation = get_conversation(client_id, email, thread_id=thread_id,
+                                    conversation_client_id=conversation_client_id)
+    attachment = None
+    for event in conversation['timeline']:
+        payload = event.get('payload')
+        if isinstance(payload, dict):
+            for item in payload.get('attachments') or []:
+                if isinstance(item, dict) and item.get('id') == attachment_id:
+                    attachment = item
+                    break
+        if attachment is not None:
+            break
+    if attachment is None:
+        raise ToolError('Attachment is not present in the accessible conversation.')
+    filename = attachment.get('filename')
+    if not isinstance(filename, str) or not filename:
+        raise ToolError('Attachment has no valid filename.')
+    try:
+        file_format(filename)
+        if isinstance(attachment.get('size'), (int, float)) and attachment['size'] > MAX_FILE_BYTES:
+            raise AttachmentError(f'Attachment exceeds the {MAX_FILE_BYTES / (1024**2):.1f} MiB limit.')
+        data = _download_attachment(attachment_id)
+        result = extract_attachment(filename, data, max_chars)
+    except AttachmentError as exc:
+        raise ToolError(str(exc)) from None
+    return {'attachment_id': attachment_id, 'filename': filename, 'size_bytes': len(data),
+            'mailbox_user_id': conversation['mailbox_user_id'],
+            'client_id': conversation['client_id'], 'email': conversation['selected_email'], **result}
+
+
+def _post_json(path: str, payload: dict, expected_status: str) -> dict:
+    """Perform one write; never replay an uncertain operation."""
+    with _session_lock:
+        client = login()
+        try:
+            response = client.post(path, json=payload, headers={'Accept': 'application/json'})
+        except httpx.RequestError:
+            raise ToolError('Write outcome unknown. Check CRM before retrying; request was not repeated.') from None
+        if response.status_code in (401, 302, 303):
+            close_session()
+            raise ToolError('Session rejected the write. Request was not repeated; check CRM before retrying.')
+        if response.status_code >= 500:
+            raise ToolError(f'Write outcome unknown (HTTP {response.status_code}). Check CRM before retrying.')
+        if response.status_code != 200:
+            raise ToolError(f'CRM write returned HTTP {response.status_code}; request was not repeated.')
+        try:
+            data = response.json()
+        except ValueError:
+            raise ToolError('Write outcome unknown: invalid JSON. Check CRM before retrying.') from None
+        if not isinstance(data, dict) or data.get('status') != expected_status:
+            raise ToolError('CRM did not confirm the write. Check CRM before retrying.')
+        return data
+
+
+@mcp.tool()
+def create_reply_draft(
+    client_id: int,
+    email: str,
+    subject: str,
+    body: str,
+    thread_id: int | None = None,
+    conversation_client_id: int | None = None,
+) -> dict:
+    """Create and save an unsent reply draft for a listed CRM contact.
+    client_id: mailbox; conversation_client_id: owner if different.
+    thread_id: positive existing thread ID; omit to create a NEW thread (0 unsupported).
+    Requires subject and body. Never sends mail or automatically retries writes."""
+    if client_id <= 0 or (conversation_client_id is not None and conversation_client_id <= 0):
+        raise ToolError('Client IDs must be positive integers.')
+    email, subject, body = email.strip(), subject.strip(), body.strip()
+    if not email or not subject or not body:
+        raise ToolError('email, subject and body must not be empty.')
+    if '\r' in email or '\n' in email or '\r' in subject or '\n' in subject:
+        raise ToolError('email and subject must not contain line breaks.')
+    if thread_id is not None and thread_id <= 0:
+        raise ToolError('Use a positive thread_id or omit it for a new thread; legacy thread 0 is unsupported.')
+    owner_id = conversation_client_id if conversation_client_id is not None else client_id
+    with _session_lock:
+        contacts = list_conversations(client_id)
+        if not any(row['client_id'] == owner_id and row['email_address'] == email for row in contacts):
+            raise ToolError('Contact is not present in the accessible CRM mailbox.')
+        # Reuse CRM selection checks, including thread visibility and ownership.
+        get_conversation(client_id, email, thread_id=thread_id, conversation_client_id=owner_id)
+        created = _post_json('/proxy/create_draft', {
+            'client_id': owner_id, 'sales_user_id': client_id,
+            'email_address': email, 'thread_id': thread_id,
+        }, 'ok')
+        draft_id = created.get('draft_id')
+        if type(draft_id) is not int or draft_id <= 0:
+            raise ToolError('CRM may have created a draft but returned no valid ID. Check CRM before retrying.')
+        try:
+            _post_json(f'/proxy/save_message/{draft_id}', {'subject': subject, 'body': body}, 'saved')
+        except Exception as exc:
+            detail = str(exc) if isinstance(exc, ToolError) else 'Unexpected error while saving.'
+            raise ToolError(f'Draft {draft_id} was created, but content save was not confirmed. '
+                            f'Do not create another draft; check this draft in CRM. {detail}') from None
+    return {'status': 'draft_created', 'draft_id': draft_id, 'mailbox_user_id': client_id,
+            'client_id': owner_id, 'email': email, 'subject': subject, 'body': body,
+            'new_thread_created': thread_id is None, 'sent': False}
+
+
+
+@mcp.tool()
+def update_reply_draft() -> dict:
+    """Not implemented. Changes nothing."""
+    return {'status': 'not_implemented'}
+
+
+@mcp.tool()
+def send_reply_draft() -> dict:
+    """Not implemented. Sends nothing."""
+    return {'status': 'not_implemented'}
+
+
+if __name__ == '__main__':
+    try:
+        mcp.run(transport='stdio')
+    finally:
+        close_session()
