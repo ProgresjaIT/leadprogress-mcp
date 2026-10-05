@@ -122,7 +122,22 @@ To odczyt tekstu, bez OCR, obrazów i odwzorowania układu. ODT/DOCX obejmują g
 treść i tekst tabel, bez nagłówków/stopki i osobnych części przypisów. PDF bez tekstu
 zwraca `status: "no_text"`; strony bez tekstu są wskazane także w dokumentach mieszanych.
 Pliki zabezpieczone hasłem, uszkodzone i nieobsługiwane formaty zwracają błąd.
-Załączniki niewysłanych projektów nie są jeszcze obsługiwane.
+Załączniki niewysłanych projektów obsługuje
+`list_draft_attachments(client_id, email, draft_id, conversation_client_id=None, thread_id=None)`.
+ID projektu pochodzi z `get_conversation.pending_approvals[].id`. Tool sprawdza
+przynależność draftu do dostępnej rozmowy i odbiorcy, następnie pobiera metadane
+przez `GET /proxy/drafts/{draft_id}/attachments`. Zwraca `attachments` z polami
+`id`, `filename`, `mime_type`, `size`, `position` (o ile backend je udostępnia).
+Pusta lista oznacza brak załączników; błędna odpowiedź API jest zgłaszana jako błąd.
+
+Aby odczytać tekst pliku draftu, wywołaj `read_attachment` z dodatkowym
+`draft_id` oraz `attachment_id` z tej listy, zachowując identyfikatory rozmowy.
+Tool ponownie sprawdza dostęp do draftu i aktualną listę jego plików.
+Nie zastępuje brakującego załącznika draftu plikiem z historii rozmowy.
+Wynik zawiera dodatkowo `draft_id`. Pobieranie wykorzystuje istniejący endpoint
+`/proxy/attachment/{attachment_id}/download`, parsery i limity opisane powyżej.
+Brak `draft_id` zachowuje dotychczasowy odczyt załączników historii.
+Oba narzędzia są tylko do odczytu: nie dołączają plików ani nie wysyłają wiadomości.
 
 Nowe zależności: `pypdf` i `defusedxml` (w `requirements.txt`). Po aktualizacji
 zależności i kodu przeładuj MCP. Testy obejmują trzy formaty przez prawdziwy protokół
@@ -166,7 +181,7 @@ właściciela rozmowy. Nie nadpisuje treści ani przypisania handlowca.
 Używaj wyłącznie na wyraźne polecenie wysłania konkretnego projektu.
 
 Backend wysyła aktualnie zapisaną treść i wszystkie dołączone do drafta pliki
-(ich lista nie jest jeszcze zwracana przez `get_conversation`). Po sukcesie
+(ich listę odczytuje `list_draft_attachments`). Po sukcesie
 przenosi wiadomość do historii i usuwa draft. Tool zwraca `status: "sent"`,
 `sent: true` oraz identyfikatory; nie oznacza to potwierdzenia doręczenia odbiorcy.
 

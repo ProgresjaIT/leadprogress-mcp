@@ -293,7 +293,7 @@ def get_conversation(
     bucket: active/storage/terminated; selects thread group, not history filter.
     Latest 20 items by default (limit 1-100), oldest first within page. Pass timeline_page.next_before
     as before with unchanged selection for older items; null means done. On stale cursor restart.
-    Attachment metadata is in timeline[].payload.attachments; file content and draft attachments excluded."""
+    Message attachments are in timeline[].payload.attachments; use list_draft_attachments for draft files."""
     _validate_page(limit)
     data = _get_conversation(client_id, email, thread_id, bucket, conversation_client_id)
     timeline = data['timeline']
@@ -351,6 +351,46 @@ def _download_attachment(attachment_id: int) -> bytes:
             raise ToolError('Cannot download attachment. Check the connection to Leadprogress.') from None
 
 
+def _get_draft_attachments(conversation: dict, draft_id: int) -> list[dict]:
+    if draft_id <= 0:
+        raise ToolError('draft_id must be a positive integer.')
+    drafts = [row for row in conversation['pending_approvals'] if row.get('id') == draft_id]
+    if len(drafts) != 1 or drafts[0].get('email_address') != conversation['selected_email']:
+        raise ToolError('Draft is not present in the accessible conversation.')
+    data = get_json(f'/proxy/drafts/{draft_id}/attachments')
+    if not isinstance(data, dict) or data.get('status') != 'ok':
+        raise ToolError('Unexpected draft attachments response format.')
+    items = data.get('attachments')
+    if (not isinstance(items, list) or any(
+            not isinstance(item, dict) or type(item.get('id')) is not int or item['id'] <= 0
+            or not isinstance(item.get('filename'), str) or not item['filename'].strip()
+            for item in items)):
+        raise ToolError('Unexpected draft attachments metadata.')
+    if len({item['id'] for item in items}) != len(items):
+        raise ToolError('Duplicate draft attachment IDs.')
+    return [{key: item[key] for key in ('id', 'filename', 'mime_type', 'size', 'position') if key in item}
+            for item in items]
+
+
+@mcp.tool()
+def list_draft_attachments(
+    client_id: int, email: str, draft_id: int,
+    conversation_client_id: int | None = None, thread_id: int | None = None,
+) -> dict:
+    """List unsent draft files (id, filename, mime_type, size, position); never sends mail.
+    draft_id: get_conversation.pending_approvals[].id. Use the same mailbox client_id,
+    email, conversation_client_id and optional thread_id as that chat.
+    Read supported file text with read_attachment using both draft_id and attachment_id."""
+    if draft_id <= 0:
+        raise ToolError('draft_id must be a positive integer.')
+    conversation = _get_conversation(client_id, email, thread_id=thread_id,
+                                    conversation_client_id=conversation_client_id)
+    attachments = _get_draft_attachments(conversation, draft_id)
+    return {'status': 'ok', 'draft_id': draft_id, 'attachments': attachments,
+            'mailbox_user_id': conversation['mailbox_user_id'],
+            'client_id': conversation['client_id'], 'email': conversation['selected_email']}
+
+
 @mcp.tool()
 def read_attachment(
     client_id: int,
@@ -359,19 +399,26 @@ def read_attachment(
     conversation_client_id: int | None = None,
     thread_id: int | None = None,
     max_chars: int = 30_000,
+    draft_id: int | None = None,
 ) -> dict:
     """Extract ODT/PDF/DOCX text; attachment_id is timeline[].payload.attachments[].id from get_conversation.
     Use the same mailbox client_id, email, conversation_client_id and optional thread_id as that chat.
     Can read attachments from older pages. Max 10 MiB, first 100 PDF pages, max_chars 1-100000 (default 30000).
-    Returns text, truncated, warnings; no_text means no extractable text. No OCR/images or draft files."""
+    For draft files, pass draft_id and attachment_id from list_draft_attachments; validates draft membership.
+    Returns text, truncated, warnings; no_text means no extractable text. No OCR/images or disk writes."""
     if attachment_id <= 0:
         raise ToolError('attachment_id must be a positive integer.')
     if not 1 <= max_chars <= 100_000:
         raise ToolError('max_chars must be between 1 and 100_000.')
+    if draft_id is not None and draft_id <= 0:
+        raise ToolError('draft_id must be a positive integer.')
     conversation = _get_conversation(client_id, email, thread_id=thread_id,
                                     conversation_client_id=conversation_client_id)
     attachment = None
-    for event in conversation['timeline']:
+    if draft_id is not None:
+        attachment = next((item for item in _get_draft_attachments(conversation, draft_id)
+                           if item['id'] == attachment_id), None)
+    for event in conversation['timeline'] if draft_id is None else []:
         payload = event.get('payload')
         if isinstance(payload, dict):
             for item in payload.get('attachments') or []:
@@ -381,7 +428,8 @@ def read_attachment(
         if attachment is not None:
             break
     if attachment is None:
-        raise ToolError('Attachment is not present in the accessible conversation.')
+        raise ToolError('Attachment is not present in the accessible draft.' if draft_id is not None
+                        else 'Attachment is not present in the accessible conversation.')
     filename = attachment.get('filename')
     if not isinstance(filename, str) or not filename:
         raise ToolError('Attachment has no valid filename.')
@@ -394,6 +442,7 @@ def read_attachment(
     except AttachmentError as exc:
         raise ToolError(str(exc)) from None
     return {'attachment_id': attachment_id, 'filename': filename, 'size_bytes': len(data),
+            **({'draft_id': draft_id} if draft_id is not None else {}),
             'mailbox_user_id': conversation['mailbox_user_id'],
             'client_id': conversation['client_id'], 'email': conversation['selected_email'], **result}
 
