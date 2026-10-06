@@ -1,0 +1,23 @@
+[Unit]
+Description=Leadprogress MCP HTTP server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/leadprogress-mcp
+ExecStart=/home/ubuntu/leadprogress-mcp/venv/bin/python /home/ubuntu/leadprogress-mcp/server.py --transport streamable-http
+# server.py loads /home/ubuntu/leadprogress-mcp/.env; do not duplicate secrets here.
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

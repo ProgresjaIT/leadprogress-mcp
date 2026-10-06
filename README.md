@@ -155,6 +155,13 @@ MCP nadal pobiera pełne dane z aplikacji, lecz zwraca modelowi tylko stronę.
 Wewnętrzne odczyty dla liczników, załączników, tworzenia, edycji i wysyłania
 draftów korzystają z pełnych danych i nie zależą od limitów publicznych tooli.
 
+## Zdalny MCP na Ubuntu
+
+HTTP z jednym wspólnym tokenem: `python server.py --transport streamable-http`.
+Domyślne uruchomienie nadal korzysta z `stdio`.
+Konfiguracja `.env`, usługa systemd, subdomena HTTPS i ustawienia klientów
+są opisane w [deploy/README.md](deploy/README.md).
+
 ## Odczyt załączników
 
 `read_attachment(client_id, email, attachment_id)` czyta ODT, PDF i DOCX.

@@ -603,7 +603,16 @@ globals().update(register_calendar_tools(mcp, get_json, _post_json, _get_convers
 
 
 if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Leadprogress MCP server')
+    parser.add_argument('--transport', choices=('stdio', 'streamable-http'), default='stdio')
+    args = parser.parse_args()
     try:
-        mcp.run(transport='stdio')
+        if args.transport == 'streamable-http':
+            from http_transport import run_http
+            run_http(mcp)
+        else:
+            mcp.run(transport='stdio')
     finally:
         close_session()
