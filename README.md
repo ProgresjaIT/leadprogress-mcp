@@ -52,6 +52,58 @@ Testy bez danych logowania i bez połączenia z produkcją:
 
 SDK: https://py.sdk.modelcontextprotocol.io/v1/
 
+## Kalendarz
+
+Toole kalendarza wymagają endpointu `GET /api/calendar/salesmen` dodanego w
+Leadprogress.app. Zwraca on ID i nazwy handlowców oraz ich aktywne konta.
+Przed użyciem wdroż zmiany panelu (w tym odpowiedź z zapisanym rekordem dla
+`/api/calendar/update`), zainstaluj zależności i przeładuj MCP.
+`tzdata` zapewnia obsługę Europe/Warsaw także na Windows.
+
+- `list_salesmen(query=None, client_id=None, limit=25, offset=0)` odkrywa ID
+  handlowców i przypisane konta. Zakres obejmuje aktywne konta, również kampanie
+  wstrzymane lub nieuruchomione, zgodnie z istniejącym kalendarzem panelu.
+- `list_calendar_events(salesman_id, date_from, date_to, client_id=None,
+  email=None, event_action=None, status="pending", limit=25, offset=0)` zwraca
+  rozmowy z całego kalendarza handlowca. Statusy: `pending` (NULL/FALSE),
+  `done` (TRUE), `all`. Typy: `sales_call`, `sales_call_scheduled`.
+- `list_salesman_absences(salesman_id, date_from, date_to, limit=25, offset=0)`
+  odczytuje urlopy i L4 nakładające się na podany okres.
+- `get_calendar_summary(salesman_id, date_from, date_to)` liczy wszystkie wpisy,
+  wykonane, oczekujące, zaległe, typy i oczekujące rozmowy AI na dzień.
+- `get_salesman_availability(salesman_id, date_from, date_to,
+  assumed_call_minutes=60)` zwraca oczekujące rozmowy, nieobecności, pary
+  nakładających się rozmów umówionych oraz liczbę rozmów AI na pełne dni
+  obejmujące zakres. Czas trwania jest jawnym założeniem, nie polem bazy.
+  Wynik jest informacyjny; LLM dobiera termin, uwzględnia nieobecności i weekendy.
+  Tool nie gwarantuje wolnych godzin ani nie definiuje godzin pracy.
+- `create_calendar_event(salesman_id, client_id, email, event_time, comment=None)`
+  tworzy wyłącznie umówioną rozmowę (`sales_call_scheduled`), bez wątku.
+  Sprawdza przypisanie konta do handlowca i dostęp do kontaktu CRM.
+- `reschedule_calendar_event(salesman_id, event_id, event_time)` przesuwa tylko
+  oczekującą umówioną rozmowę i wymaga potwierdzenia zapisanego rekordu.
+- `record_call_result(salesman_id, event_id, picked_up)` zapisuje rzeczywisty
+  wynik rozmowy: `true` oznacza wykonaną, `false` pozostawia oczekującą i czyści
+  `done_at`, zgodnie z istniejącym endpointem CRM.
+
+Zakresy mają wyłączny koniec (`date_to`). Dotyczy to również zwracanej daty
+końca nieobecności: `2026-10-08` oznacza, że ostatnim dniem jest 7 października.
+Daty wejściowe są ISO, bez offsetu jako czas lokalny Warszawy; podany offset
+jest konwertowany do Warszawy. Wynik zawiera `timezone: "Europe/Warsaw"` i ISO
+bez offsetu. Odczyt RFC dat Flask oznaczonych GMT zachowuje godzinę zapisaną
+w bazie; nie zmienia reprezentacji czasu istniejącego panelu.
+
+Konflikty nie blokują zapisu. Przed umawianiem/przekładaniem odczytaj dostępność
+i unikaj nieobecności. Limit 3 oczekujących `sales_call` dziennie jest liczony
+łącznie ze wszystkich aktywnych kont handlowca. Toole nie tworzą ani nie
+przekładają `sales_call`, więc nie omijają istniejącego planowania AI.
+Nie uszczelniają jego dotychczasowych ograniczeń przy równoczesnych zapisach
+lub braku wolnego dnia w okresie wyszukiwania.
+
+Zapisy są wykonywane raz. Po timeoutach/błędach sprawdź kalendarz przed kolejną
+próbą. Tworzenie i przesuwanie rozmów może wpływać na istniejące przypomnienia
+SMS do handlowca. Testy wykorzystują testowe API, bez produkcyjnych zapisów/SMS.
+
 
 ## Liczniki
 

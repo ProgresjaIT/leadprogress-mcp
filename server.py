@@ -447,7 +447,7 @@ def read_attachment(
             'client_id': conversation['client_id'], 'email': conversation['selected_email'], **result}
 
 
-def _post_json(path: str, payload: dict, expected_status: str) -> dict:
+def _post_json(path: str, payload: dict, expected_status: str | None) -> dict:
     """Perform one write; never replay an uncertain operation."""
     with _session_lock:
         client = login()
@@ -466,7 +466,7 @@ def _post_json(path: str, payload: dict, expected_status: str) -> dict:
             data = response.json()
         except ValueError:
             raise ToolError('Write outcome unknown: invalid JSON. Check CRM before retrying.') from None
-        if not isinstance(data, dict) or data.get('status') != expected_status:
+        if not isinstance(data, dict) or (expected_status is not None and data.get('status') != expected_status):
             raise ToolError('CRM did not confirm the write. Check CRM before retrying.')
         return data
 
@@ -595,6 +595,11 @@ def send_reply_draft(
             'mailbox_user_id': conversation['mailbox_user_id'],
             'client_id': conversation['client_id'], 'email': conversation['selected_email'],
             'sent': True}
+
+
+from calendar_tools import register_calendar_tools
+
+globals().update(register_calendar_tools(mcp, get_json, _post_json, _get_conversation, _validate_page, _page))
 
 
 if __name__ == '__main__':
