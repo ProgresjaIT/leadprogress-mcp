@@ -12,6 +12,7 @@ from attachments import AttachmentError, MAX_FILE_BYTES, extract_attachment, fil
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import ToolAnnotations
 
 load_dotenv(Path(__file__).with_name('.env'))
 mcp = FastMCP('Leadprogress')
@@ -160,7 +161,10 @@ def _page(rows: list[dict], limit: int, offset: int) -> dict:
             'next_offset': offset + len(items) if offset + len(items) < len(rows) else None}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False,
+    idempotentHint=True, openWorldHint=False,
+))
 def list_clients(limit: int = 25, offset: int = 0,
                  query: str | None = None, salesman: str | None = None) -> dict:
     """List active, running, unpaused clients; client_id can be used as mailbox ID.
@@ -173,7 +177,10 @@ def list_clients(limit: int = 25, offset: int = 0,
     return _page(rows, limit, offset)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False,
+    idempotentHint=True, openWorldHint=False,
+))
 def list_client_attachments(client_id: int, query: str | None = None,
                             limit: int = 25, offset: int = 0) -> dict:
     """Browse the client's outgoing attachment library, as shown in the client panel.
@@ -208,7 +215,10 @@ def list_client_attachments(client_id: int, query: str | None = None,
     return {'client_id': client_id, **_page(rows, limit, offset)}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False,
+    idempotentHint=True, openWorldHint=False,
+))
 def list_conversations(client_id: int, query: str | None = None,
                        bucket: str | None = None, stage: str | None = None,
                        limit: int = 25, offset: int = 0) -> dict:
@@ -235,7 +245,10 @@ def _counter_summary(rows: list[dict], fields: tuple[str, ...]) -> dict:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False,
+    idempotentHint=True, openWorldHint=False,
+))
 def get_clients_summary(query: str | None = None, salesman: str | None = None) -> dict:
     """Count ALL matching active, running, unpaused clients, independent of pagination.
     query: name substring; salesman: exact name, both case-insensitive.
@@ -246,7 +259,10 @@ def get_clients_summary(query: str | None = None, salesman: str | None = None) -
         'pending_questions', 'pending_sales_call', 'pending_sales_call_scheduled'))}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False,
+    idempotentHint=True, openWorldHint=False,
+))
 def get_conversations_summary(client_id: int, query: str | None = None,
                               bucket: str | None = None, stage: str | None = None) -> dict:
     """Count ALL matching CRM list rows for mailbox client_id, independent of pagination.
@@ -316,7 +332,10 @@ def _get_conversation(
     return data
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False,
+    idempotentHint=True, openWorldHint=False,
+))
 def get_conversation(
     client_id: int, email: str, thread_id: int | None = None,
     bucket: str | None = None, conversation_client_id: int | None = None,
@@ -407,7 +426,10 @@ def _get_draft_attachments(conversation: dict, draft_id: int) -> list[dict]:
             for item in items]
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False,
+    idempotentHint=True, openWorldHint=False,
+))
 def list_draft_attachments(
     client_id: int, email: str, draft_id: int,
     conversation_client_id: int | None = None, thread_id: int | None = None,
@@ -426,7 +448,10 @@ def list_draft_attachments(
             'client_id': conversation['client_id'], 'email': conversation['selected_email']}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False,
+    idempotentHint=True, openWorldHint=False,
+))
 def read_attachment(
     client_id: int,
     email: str,
@@ -506,7 +531,10 @@ def _post_json(path: str, payload: dict, expected_status: str | None) -> dict:
         return data
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False,
+    idempotentHint=False, openWorldHint=False,
+))
 def create_reply_draft(
     client_id: int,
     email: str,
@@ -555,7 +583,10 @@ def create_reply_draft(
 
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True,
+    idempotentHint=False, openWorldHint=False,
+))
 def update_reply_draft(
     client_id: int,
     email: str,
@@ -596,7 +627,10 @@ def update_reply_draft(
             **values, 'sent': False}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True,
+    idempotentHint=False, openWorldHint=True,
+))
 def send_reply_draft(
     client_id: int,
     email: str,

@@ -52,6 +52,30 @@ Testy bez danych logowania i bez połączenia z produkcją:
 
 SDK: https://py.sdk.modelcontextprotocol.io/v1/
 
+## Adnotacje narzędzi MCP
+
+Każde narzędzie publikuje jawne `ToolAnnotations` w `tools/list`:
+
+| Operacje | readOnlyHint | destructiveHint | idempotentHint | openWorldHint |
+| --- | --- | --- | --- | --- |
+| Wszystkie odczyty (`list_*`, `get_*`, `read_attachment`) | true | false | true | false |
+| `create_reply_draft` | false | false | false | false |
+| `update_reply_draft`, `record_call_result` | false | true | false | false |
+| `send_reply_draft` | false | true | false | true |
+| `create_calendar_event` | false | false | false | true |
+| `reschedule_calendar_event` | false | true | false | true |
+
+Odczyty dotyczą zamkniętego CRM, nawet jeśli serwer jest zdalny. Nadpisanie
+treści/statusu, przesunięcie terminu i usunięcie draftu po wysyłce oznaczamy
+przez `destructiveHint`. Wysyłka maila oraz operacje kalendarza mogące uruchamiać
+lub zmieniać przypomnienia SMS mają `openWorldHint=true`.
+Zapisy zachowują `idempotentHint=false`: nie obiecujemy bezpiecznego ponawiania
+bez gwarancji backendu, także w odniesieniu do skutków ubocznych.
+
+Adnotacje pomagają klientowi rozpoznać odczyty i skutki zapisów; nie zastępują
+autoryzacji ani nie wyłączają polityki zgód klienta. Nie zmieniają działania
+narzędzi ani istniejącej zasady nieponawiania zapisów po błędzie.
+
 ## Kalendarz
 
 Toole kalendarza wymagają endpointu `GET /api/calendar/salesmen` dodanego w

@@ -5,6 +5,7 @@ from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import ToolAnnotations
 
 WARSAW = ZoneInfo('Europe/Warsaw')
 CALL_TYPES = ('sales_call', 'sales_call_scheduled')
@@ -119,7 +120,10 @@ def register_calendar_tools(mcp, get_json, post_json, get_conversation, validate
             raise ToolError('Event is not present in the accessible salesman calendar.')
         return matches[0]
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False,
+        idempotentHint=True, openWorldHint=False,
+    ))
     def list_salesmen(query: str | None = None, client_id: int | None = None,
                      limit: int = 25, offset: int = 0) -> dict:
         """Discover calendar salesman IDs/names and active accounts (clients[].id/username).
@@ -132,7 +136,10 @@ def register_calendar_tools(mcp, get_json, post_json, get_conversation, validate
                 and (client_id is None or any(c['id'] == client_id for c in row['clients']))]
         return page(sorted(rows, key=lambda row: (row['name'], row['id'])), limit, offset)
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False,
+        idempotentHint=True, openWorldHint=False,
+    ))
     def list_calendar_events(salesman_id: int, date_from: str, date_to: str,
                              client_id: int | None = None, email: str | None = None,
                              event_action: str | None = None, status: str = 'pending',
@@ -145,7 +152,10 @@ def register_calendar_tools(mcp, get_json, post_json, get_conversation, validate
         rows = filter_events(events(salesman_id), start, end, client_id, email, event_action, status)
         return {'timezone': 'Europe/Warsaw', **page(rows, limit, offset)}
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False,
+        idempotentHint=True, openWorldHint=False,
+    ))
     def list_salesman_absences(salesman_id: int, date_from: str, date_to: str,
                               limit: int = 25, offset: int = 0) -> dict:
         """Read overlapping holidays/L4; ISO Warsaw dates, range and absence end exclusive.
@@ -154,7 +164,10 @@ def register_calendar_tools(mcp, get_json, post_json, get_conversation, validate
         start, end = date_range(date_from, date_to)
         return {'timezone': 'Europe/Warsaw', **page(absences(salesman_id, start, end), limit, offset)}
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False,
+        idempotentHint=True, openWorldHint=False,
+    ))
     def get_calendar_summary(salesman_id: int, date_from: str, date_to: str) -> dict:
         """Count ALL calls in a Warsaw range (end exclusive), independently of pagination.
         Includes pending/done, pending overdue (before now), by action and pending AI calls by day.
@@ -170,7 +183,10 @@ def register_calendar_tools(mcp, get_json, post_json, get_conversation, validate
                 'pending_ai_calls_by_day': dict(Counter(row['event_time'][:10] for row in pending
                                                       if row['event_action'] == 'sales_call'))}
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False,
+        idempotentHint=True, openWorldHint=False,
+    ))
     def get_salesman_availability(salesman_id: int, date_from: str, date_to: str,
                                  assumed_call_minutes: int = 60) -> dict:
         """Read pending calls, holidays/L4, overlapping agreed calls and AI daily counts across accounts.
@@ -198,7 +214,10 @@ def register_calendar_tools(mcp, get_json, post_json, get_conversation, validate
                 'days_at_ai_limit': sorted(day for day, count in counts.items() if count >= 3),
                 'informational_only': True}
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False,
+        idempotentHint=False, openWorldHint=True,
+    ))
     def create_calendar_event(salesman_id: int, client_id: int, email: str,
                               event_time: str, comment: str | None = None) -> dict:
         """Create an agreed call (sales_call_scheduled), never an AI-imposed sales_call.
@@ -219,7 +238,10 @@ def register_calendar_tools(mcp, get_json, post_json, get_conversation, validate
             raise ToolError('Created event was not confirmed. Check calendar before retrying.')
         return {'status': 'created', 'timezone': 'Europe/Warsaw', 'event': row | {'event_time': stored_time(row['event_time']).isoformat()}}
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True,
+        idempotentHint=False, openWorldHint=True,
+    ))
     def reschedule_calendar_event(salesman_id: int, event_id: int, event_time: str) -> dict:
         """Move a pending agreed call only; never moves AI calls (their 3/day planning is unchanged).
         ISO Warsaw time; read availability/absences first. Overlaps are informational, not blocked.
@@ -237,7 +259,10 @@ def register_calendar_tools(mcp, get_json, post_json, get_conversation, validate
             raise ToolError('Updated event was not confirmed. Check calendar before retrying.')
         return {'status': 'updated', 'timezone': 'Europe/Warsaw', 'event': row | {'event_time': stored_time(row['event_time']).isoformat()}}
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True,
+        idempotentHint=False, openWorldHint=False,
+    ))
     def record_call_result(salesman_id: int, event_id: int, picked_up: bool) -> dict:
         """Record actual call result: true completes it, false keeps it pending and clears done_at.
         Supports agreed and AI calls from this salesman calendar. Does not send SMS/mail.
