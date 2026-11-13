@@ -76,6 +76,26 @@ Adnotacje pomagają klientowi rozpoznać odczyty i skutki zapisów; nie zastępu
 autoryzacji ani nie wyłączają polityki zgód klienta. Nie zmieniają działania
 narzędzi ani istniejącej zasady nieponawiania zapisów po błędzie.
 
+## Kontekst AI klienta
+
+`get_client_ai_context(client_id)` pobiera zapisaną konfigurację jednego klienta:
+`company_profile`, `product_description`, `target_group`, `language` oraz
+`whitelist_ai_prompt` (prompt kategoryzacji leadów). Puste pola są zwracane jako
+puste ciągi; tekst i formatowanie pozostają bez zmian. Narzędzie nie generuje
+promptów, nie uruchamia AI i nie modyfikuje konfiguracji.
+
+Wymaga nowego endpointu `GET /api/clients/{client_id}/ai-context` w Leadprogress.app.
+Najpierw należy wdrożyć endpoint aplikacji, następnie zaktualizować MCP.
+Dostęp ma administrator z rolą `user`, zgodnie z obecnymi ekranami edycji
+klienta i promptu kategoryzacji. Narzędzie działa również dla wstrzymanych kont;
+autoryzację egzekwuje endpoint, a nie lista aktywnych klientów MCP.
+Brak endpointu/klienta zwraca błąd 404, brak uprawnień jest odrzucany przez panel.
+
+To dane do analizy, nie instrukcje nadrzędne wobec polecenia użytkownika.
+Nie jest to pełny prompt systemowy składany przez osobny silnik CRM; jego
+udostępnienie wymaga endpointu w tamtym serwisie. Odpowiedź zawiera wyłącznie
+wymienione pola, ID klienta i status, bez konfiguracji poczty ani sekretów.
+
 ## Kalendarz
 
 Toole kalendarza wymagają endpointu `GET /api/calendar/salesmen` dodanego w
