@@ -162,6 +162,24 @@ Domyślne uruchomienie nadal korzysta z `stdio`.
 Konfiguracja `.env`, usługa systemd, subdomena HTTPS i ustawienia klientów
 są opisane w [deploy/README.md](deploy/README.md).
 
+## Biblioteka załączników klienta
+
+`list_client_attachments(client_id, query=None, limit=25, offset=0)` przegląda
+bibliotekę plików `out_going_to_client`, tak jak panel edycji klienta.
+`client_id` pochodzi z `list_clients`: obsługiwane są aktywne, uruchomione,
+niezapauzowane konta dostępne dla zalogowanego użytkownika.
+Odczyt używa `GET /proxy/clients/{client_id}/available_attachments?type=out_going_to_client`.
+Zwraca `items` z ID, nazwą, opisem, MIME, rozmiarem i typem (o ile backend je podaje),
+oraz `total`, `returned`, `next_offset`. `query` wyszukuje w nazwie i opisie,
+bez rozróżniania wielkości liter. Kolejne strony pobieraj z `next_offset`,
+zachowując klienta i filtry; limit wynosi 1–100. Dane są sortowane po ID.
+
+Lista obejmuje również pliki nieprzypięte do rozmów ani draftów. Nie obejmuje
+osobnego modułu umów `client_contracts`. Narzędzie zwraca wyłącznie metadane:
+nie pobiera treści, nie dodaje plików i nie przypina ich do draftów.
+`read_attachment` nadal wymaga przynależności pliku do wskazanej rozmowy/draftu;
+samo ID z biblioteki nie wystarcza do odczytu treści.
+
 ## Odczyt załączników
 
 `read_attachment(client_id, email, attachment_id)` czyta ODT, PDF i DOCX.

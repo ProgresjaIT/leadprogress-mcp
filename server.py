@@ -174,6 +174,41 @@ def list_clients(limit: int = 25, offset: int = 0,
 
 
 @mcp.tool()
+def list_client_attachments(client_id: int, query: str | None = None,
+                            limit: int = 25, offset: int = 0) -> dict:
+    """Browse the client's outgoing attachment library, as shown in the client panel.
+    client_id: ID from list_clients (active, running, unpaused accounts only).
+    Includes files not attached to any conversation/draft; excludes the separate contracts module.
+    query: case-insensitive filename/description substring. Returns metadata only, not file text.
+    Returns items,total,returned,next_offset; pass next_offset with unchanged filters for more.
+    Library-only IDs cannot be read by read_attachment until attached to a conversation/draft."""
+    if type(client_id) is not int or client_id <= 0:
+        raise ToolError('client_id must be a positive integer.')
+    _validate_page(limit, offset)
+    if not any(row['client_id'] == client_id for row in _list_clients()):
+        raise ToolError('Client is not present in the accessible active CRM accounts.')
+    data = get_json(f'/proxy/clients/{client_id}/available_attachments?type=out_going_to_client')
+    if not isinstance(data, dict) or not isinstance(data.get('attachments'), list):
+        raise ToolError('Unexpected client attachment library response format.')
+    rows = data['attachments']
+    if any(not isinstance(row, dict) or type(row.get('id')) is not int or row['id'] <= 0
+           or not isinstance(row.get('filename'), str) or not row['filename'].strip()
+           or (row.get('description') is not None and not isinstance(row['description'], str))
+           for row in rows):
+        raise ToolError('Unexpected client attachment metadata.')
+    if len({row['id'] for row in rows}) != len(rows):
+        raise ToolError('Duplicate client attachment IDs.')
+    query = (query or '').strip().casefold()
+    rows = [row for row in rows if row.get('type') == 'out_going_to_client'
+            and (not query or query in row['filename'].casefold()
+                 or query in (row.get('description') or '').casefold())]
+    rows.sort(key=lambda row: row['id'])
+    fields = ('id', 'filename', 'description', 'mime_type', 'size', 'type')
+    rows = [{key: row[key] for key in fields if key in row} for row in rows]
+    return {'client_id': client_id, **_page(rows, limit, offset)}
+
+
+@mcp.tool()
 def list_conversations(client_id: int, query: str | None = None,
                        bucket: str | None = None, stage: str | None = None,
                        limit: int = 25, offset: int = 0) -> dict:
