@@ -22,6 +22,8 @@ class ToolAnnotationTests(unittest.TestCase):
         # readOnlyHint, destructiveHint, idempotentHint, openWorldHint
         expected = {name: (True, False, True, False) for name in reads}
         expected.update({
+            'attach_draft_attachment': (False, False, False, False),
+            'detach_draft_attachment': (False, True, False, False),
             'create_reply_draft': (False, False, False, False),
             'update_reply_draft': (False, True, False, False),
             'send_reply_draft': (False, True, False, True),

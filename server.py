@@ -199,6 +199,21 @@ def list_clients(limit: int = 25, offset: int = 0,
     return _page(rows, limit, offset)
 
 
+def _client_attachment_library(client_id: int) -> list[dict]:
+    data = get_json(f'/proxy/clients/{client_id}/available_attachments?type=out_going_to_client')
+    if not isinstance(data, dict) or not isinstance(data.get('attachments'), list):
+        raise ToolError('Unexpected client attachment library response format.')
+    rows = data['attachments']
+    if any(not isinstance(row, dict) or type(row.get('id')) is not int or row['id'] <= 0
+           or not isinstance(row.get('filename'), str) or not row['filename'].strip()
+           or (row.get('description') is not None and not isinstance(row['description'], str))
+           for row in rows):
+        raise ToolError('Unexpected client attachment metadata.')
+    if len({row['id'] for row in rows}) != len(rows):
+        raise ToolError('Duplicate client attachment IDs.')
+    return rows
+
+
 @mcp.tool(annotations=ToolAnnotations(
     readOnlyHint=True, destructiveHint=False,
     idempotentHint=True, openWorldHint=False,
@@ -216,17 +231,7 @@ def list_client_attachments(client_id: int, query: str | None = None,
     _validate_page(limit, offset)
     if not any(row['client_id'] == client_id for row in _list_clients()):
         raise ToolError('Client is not present in the accessible active CRM accounts.')
-    data = get_json(f'/proxy/clients/{client_id}/available_attachments?type=out_going_to_client')
-    if not isinstance(data, dict) or not isinstance(data.get('attachments'), list):
-        raise ToolError('Unexpected client attachment library response format.')
-    rows = data['attachments']
-    if any(not isinstance(row, dict) or type(row.get('id')) is not int or row['id'] <= 0
-           or not isinstance(row.get('filename'), str) or not row['filename'].strip()
-           or (row.get('description') is not None and not isinstance(row['description'], str))
-           for row in rows):
-        raise ToolError('Unexpected client attachment metadata.')
-    if len({row['id'] for row in rows}) != len(rows):
-        raise ToolError('Duplicate client attachment IDs.')
+    rows = _client_attachment_library(client_id)
     query = (query or '').strip().casefold()
     rows = [row for row in rows if row.get('type') == 'out_going_to_client'
             and (not query or query in row['filename'].casefold()
@@ -436,7 +441,10 @@ def _get_draft_attachments(conversation: dict, draft_id: int) -> list[dict]:
     data = get_json(f'/proxy/drafts/{draft_id}/attachments')
     if not isinstance(data, dict) or data.get('status') != 'ok':
         raise ToolError('Unexpected draft attachments response format.')
-    items = data.get('attachments')
+    return _draft_attachment_metadata(data.get('attachments'))
+
+
+def _draft_attachment_metadata(items) -> list[dict]:
     if (not isinstance(items, list) or any(
             not isinstance(item, dict) or type(item.get('id')) is not int or item['id'] <= 0
             or not isinstance(item.get('filename'), str) or not item['filename'].strip()
@@ -530,11 +538,15 @@ def read_attachment(
 
 
 def _post_json(path: str, payload: dict, expected_status: str | None) -> dict:
+    return _write_json('POST', path, payload, expected_status)
+
+
+def _write_json(method: str, path: str, payload: dict | None, expected_status: str | None) -> dict:
     """Perform one write; never replay an uncertain operation."""
     with _session_lock:
         client = login()
         try:
-            response = client.post(path, json=payload, headers={'Accept': 'application/json'})
+            response = client.request(method, path, json=payload, headers={'Accept': 'application/json'})
         except httpx.RequestError:
             raise ToolError('Write outcome unknown. Check CRM before retrying; request was not repeated.') from None
         if response.status_code in (401, 302, 303):
@@ -551,6 +563,80 @@ def _post_json(path: str, payload: dict, expected_status: str | None) -> dict:
         if not isinstance(data, dict) or (expected_status is not None and data.get('status') != expected_status):
             raise ToolError('CRM did not confirm the write. Check CRM before retrying.')
         return data
+
+
+def _change_draft_attachment(client_id: int, email: str, draft_id: int, attachment_id: int,
+                             conversation_client_id: int | None, thread_id: int | None,
+                             attach: bool) -> dict:
+    for name, value in (('client_id', client_id), ('draft_id', draft_id), ('attachment_id', attachment_id)):
+        if type(value) is not int or value <= 0:
+            raise ToolError(f'{name} must be a positive integer.')
+    if conversation_client_id is not None and (type(conversation_client_id) is not int or conversation_client_id <= 0):
+        raise ToolError('conversation_client_id must be a positive integer.')
+    if thread_id is not None and (type(thread_id) is not int or thread_id < 0):
+        raise ToolError('thread_id must be a non-negative integer.')
+    with _session_lock:
+        conversation = _get_conversation(client_id, email, thread_id=thread_id,
+                                        conversation_client_id=conversation_client_id)
+        files = _get_draft_attachments(conversation, draft_id)
+        previous = {item['id'] for item in files}
+        changed = (attachment_id not in previous) if attach else (attachment_id in previous)
+        if changed:
+            if attach:
+                library = _client_attachment_library(conversation['client_id'])
+                if not any(item['id'] == attachment_id and item.get('type') == 'out_going_to_client'
+                           for item in library):
+                    raise ToolError('Attachment is not present in the conversation owner outgoing library.')
+            try:
+                if attach:
+                    result = _post_json(f'/proxy/drafts/{draft_id}/attachments',
+                                        {'attachment_ids': [attachment_id]}, 'linked')
+                else:
+                    result = _write_json('DELETE', f'/proxy/drafts/{draft_id}/attachments/{attachment_id}',
+                                         None, 'deleted')
+                files = _draft_attachment_metadata(result.get('attachments'))
+                current = {item['id'] for item in files}
+                expected = previous | {attachment_id} if attach else previous - {attachment_id}
+                if not expected <= current or (not attach and attachment_id in current):
+                    raise ToolError('Backend did not confirm the requested attachment change.')
+            except ToolError as exc:
+                raise ToolError(f'Draft {draft_id} attachment change was not confirmed. '
+                                f'Check list_draft_attachments before retrying; the write may have succeeded. {exc}') from None
+    return {'status': 'attached' if attach else 'detached', 'changed': changed,
+            'draft_id': draft_id, 'attachment_id': attachment_id, 'attachments': files,
+            'mailbox_user_id': conversation['mailbox_user_id'],
+            'client_id': conversation['client_id'], 'email': conversation['selected_email']}
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False,
+    idempotentHint=False, openWorldHint=False,
+))
+def attach_draft_attachment(client_id: int, email: str, draft_id: int, attachment_id: int,
+                            conversation_client_id: int | None = None, thread_id: int | None = None) -> dict:
+    """Attach one existing outgoing library file to an accessible unsent draft. No upload or mail send.
+    Use chat mailbox client_id, email, conversation_client_id and optional thread_id.
+    draft_id: pending_approvals[].id; attachment_id: library of conversation_client_id (owner),
+    or client_id when owner is omitted. Preserves other files; already attached returns changed=false.
+    Returns current attachments. Never retries writes; after errors inspect list_draft_attachments.
+    Concurrent changes in the panel are not atomic with this check."""
+    return _change_draft_attachment(client_id, email, draft_id, attachment_id,
+                                     conversation_client_id, thread_id, attach=True)
+
+
+@mcp.tool(annotations=ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True,
+    idempotentHint=False, openWorldHint=False,
+))
+def detach_draft_attachment(client_id: int, email: str, draft_id: int, attachment_id: int,
+                            conversation_client_id: int | None = None, thread_id: int | None = None) -> dict:
+    """Unlink one file from an accessible unsent draft; keep the library file and other draft files.
+    Use the same mailbox client_id, email, conversation_client_id and optional thread_id as the chat.
+    IDs come from list_draft_attachments. Already absent returns changed=false. Never sends mail.
+    Returns current attachments. Never retries writes; after errors inspect list_draft_attachments.
+    Concurrent changes in the panel are not atomic with this check."""
+    return _change_draft_attachment(client_id, email, draft_id, attachment_id,
+                                     conversation_client_id, thread_id, attach=False)
 
 
 @mcp.tool(annotations=ToolAnnotations(

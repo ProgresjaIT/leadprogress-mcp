@@ -59,8 +59,8 @@ Każde narzędzie publikuje jawne `ToolAnnotations` w `tools/list`:
 | Operacje | readOnlyHint | destructiveHint | idempotentHint | openWorldHint |
 | --- | --- | --- | --- | --- |
 | Wszystkie odczyty (`list_*`, `get_*`, `read_attachment`) | true | false | true | false |
-| `create_reply_draft` | false | false | false | false |
-| `update_reply_draft`, `record_call_result` | false | true | false | false |
+| `create_reply_draft`, `attach_draft_attachment` | false | false | false | false |
+| `update_reply_draft`, `record_call_result`, `detach_draft_attachment` | false | true | false | false |
 | `send_reply_draft` | false | true | false | true |
 | `create_calendar_event` | false | false | false | true |
 | `reschedule_calendar_event` | false | true | false | true |
@@ -292,6 +292,33 @@ Zapis nadpisuje oba pola tego samego projektu i zwraca `sent: false`.
 Backend usuwa skrajne białe znaki i aktualizuje czas edycji.
 Tool nie tworzy projektu, nie wysyła wiadomości i nie ponawia zapisu.
 Backend nie zapewnia kontroli wersji: równoczesna edycja w panelu może zostać nadpisana.
+
+## Podpinanie i odpinanie plików draftu
+
+`attach_draft_attachment(client_id, email, draft_id, attachment_id, conversation_client_id=None, thread_id=None)`
+podpina jeden istniejący plik typu `out_going_to_client` z biblioteki właściciela
+rozmowy. `detach_draft_attachment` z tymi samymi argumentami odpina plik z draftu,
+pozostawiając go w bibliotece. Żadne z tych narzędzi nie wysyła maila ani nie
+uploaduje plików. Pozostałe załączniki i treść draftu pozostają zachowane.
+
+`draft_id` pochodzi z `get_conversation.pending_approvals[].id`. Zachowaj
+identyfikatory skrzynki, rozmowy i wątku. Przy podpinaniu wybierz `attachment_id`
+z biblioteki **właściciela rozmowy** (`conversation_client_id`, jeśli podany),
+niekoniecznie skrzynki `client_id`. Przy odpinaniu użyj ID z `list_draft_attachments`.
+Narzędzia sprawdzają dostępność draftu w rozmowie przed jakimkolwiek zapisem.
+Biblioteka jest sprawdzana w całości, niezależnie od paginacji narzędzia listującego.
+
+Wynik zawiera `status: "attached"` / `"detached"`, `changed` i listę `attachments`.
+Już podpięty plik lub już nieobecny plik przy odpinaniu daje `changed: false`
+bez zapisu. Podpięcie korzysta z `POST /proxy/drafts/{draft_id}/attachments`
+z `attachment_ids: [attachment_id]`, a odpięcie z
+`DELETE /proxy/drafts/{draft_id}/attachments/{attachment_id}`.
+Odpowiedź backendu musi potwierdzić oczekiwaną listę plików.
+
+Zapisy nigdy nie są automatycznie ponawiane. Po timeout/błędzie odczytaj
+`list_draft_attachments` przed kolejną próbą, bo operacja mogła już się wykonać.
+Blokada w MCP nie obejmuje równoczesnej edycji/wysyłki z panelu ani innych
+procesów: backend nie zapewnia atomowości sprawdzenia i zapisu.
 
 ## Wysyłka projektu odpowiedzi
 
