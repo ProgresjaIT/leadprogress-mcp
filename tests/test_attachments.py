@@ -19,7 +19,7 @@ from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
 
 from attachments import AttachmentError, extract_attachment
 import server
-from test_server import FakePanel, ThreadingHTTPServer
+from tests.test_server import FakePanel, ThreadingHTTPServer
 
 
 def office_file(kind, text='Zażółć gęślą jaźń'):

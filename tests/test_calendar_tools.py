@@ -14,7 +14,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 import server
 from calendar_tools import input_time, stored_time
-from test_server import FakePanel, ThreadingHTTPServer
+from tests.test_server import FakePanel, ThreadingHTTPServer
 
 
 def event(id, time='2026-10-05T10:00:00', **values):

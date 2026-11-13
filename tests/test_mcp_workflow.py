@@ -111,7 +111,7 @@ class MCPWorkflowTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / 'runner.py'
-            script.write_text('import sys\nsys.path.insert(0, ' + repr(str(Path(__file__).parent)) + ')\n' + RUNNER, encoding='utf-8')
+            script.write_text('import sys\nsys.path.insert(0, ' + repr(str(Path(__file__).resolve().parent.parent)) + ')\n' + RUNNER, encoding='utf-8')
             asyncio.run(asyncio.wait_for(run(script), 45))
 
 

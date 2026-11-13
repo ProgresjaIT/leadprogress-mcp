@@ -47,7 +47,7 @@ Ręczne uruchomienie `python server.py` czeka na komunikaty MCP na stdin.
 Testy bez danych logowania i bez połączenia z produkcją:
 
 ```powershell
-.\venv\Scripts\python.exe -m unittest -v
+.\venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 ```
 
 SDK: https://py.sdk.modelcontextprotocol.io/v1/

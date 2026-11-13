@@ -107,6 +107,6 @@ Bez OAuth i bez logowania w przegladarce.
 
 ## Weryfikacja
 
-Lokalne testy transportu: `venv/bin/python -m unittest test_http_transport -v`.
+Lokalne testy transportu: `venv/bin/python -m unittest tests.test_http_transport -v`.
 Nie lacza sie z produkcyjnym CRM. Testy wdrozenia przez publiczna subdomene,
 kilka komputerow i operacje na prawdziwych danych pozostaja osobnym krokiem.

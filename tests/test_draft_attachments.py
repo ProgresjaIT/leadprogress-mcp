@@ -12,8 +12,8 @@ from mcp.client.stdio import stdio_client
 from mcp.server.fastmcp.exceptions import ToolError
 
 import server
-from test_attachments import AttachmentPanel, office_file, pdf_file
-from test_server import ThreadingHTTPServer
+from tests.test_attachments import AttachmentPanel, office_file, pdf_file
+from tests.test_server import ThreadingHTTPServer
 
 
 def conversation():
