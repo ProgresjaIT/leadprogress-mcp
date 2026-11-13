@@ -1,0 +1,29 @@
+name: Deploy via SSH
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Set up SSH Key
+      uses: webfactory/ssh-agent@v0.8.0
+      with:
+        ssh-private-key: ${{ secrets.RSA_PRIVATE_KEY }}
+
+    - name: Pull Git Repository on Server
+      run: |
+        ssh -o StrictHostKeyChecking=no ubuntu@146.59.19.138 << 'EOF'
+        cd ~/leadprogress-mcp
+        git pull origin main
+        source venv/bin/activate
+        pip install -r requirements.txt
+        sudo systemctl restart leadprogress-mcp.service
+        EOF
