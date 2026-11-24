@@ -17,7 +17,7 @@ class ToolAnnotationTests(unittest.TestCase):
             'get_clients_summary', 'get_conversations_summary', 'get_conversation',
             'list_draft_attachments', 'read_attachment', 'list_salesmen',
             'list_calendar_events', 'list_salesman_absences', 'get_calendar_summary',
-            'get_salesman_availability', 'get_client_ai_context',
+            'get_salesman_availability', 'get_client_ai_context', 'get_reply_prompts',
         }
         # readOnlyHint, destructiveHint, idempotentHint, openWorldHint
         expected = {name: (True, False, True, False) for name in reads}

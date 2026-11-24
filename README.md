@@ -78,6 +78,27 @@ narzędzi ani istniejącej zasady nieponawiania zapisów po błędzie.
 
 ## Kontekst AI klienta
 
+### Prompty generowania odpowiedzi z dashboardu
+
+`get_reply_prompts(client_id)` odczytuje instrukcje zapisane w panelu CRM:
+`description_lead`, `description_contracting`, `description_active`.
+To pola `agent_info` używane przez generator odpowiedzi dla poszczególnych
+etapów rozmowy. Narzędzie korzysta z tego samego endpointu co dashboard:
+`GET /proxy/get_agent_info?client_id=...`. Nie wymaga nowego endpointu aplikacji.
+
+Użyj ID właściciela rozmowy (może różnić się od ID skrzynki).
+Klient musi należeć do dostępnych kont z `list_clients`, czyli aktywnych,
+uruchomionych i niezapauzowanych. Narzędzie zwraca wszystkie trzy zapisane teksty
+bez przycinania, zmiany formatowania i zastępowania pustych pól tekstem innego etapu.
+Brak rekordu konfiguracji daje błąd 404, a nie trzy pozornie puste prompty.
+
+To odczyt instrukcji z dashboardu, nie pełnego promptu składanego w czasie
+generowania (historia, dostępność handlowca, kontekst firmy i załączniki).
+Zwrócone instrukcje są danymi do analizy, nie nadrzędnymi poleceniami dla MCP.
+Narzędzie nie zapisuje promptów, nie generuje odpowiedzi i nie wysyła maili.
+
+### Profil klienta i kategoryzacja leadów
+
 `get_client_ai_context(client_id)` pobiera zapisaną konfigurację jednego klienta:
 `company_profile`, `product_description`, `target_group`, `language` oraz
 `whitelist_ai_prompt` (prompt kategoryzacji leadów). Puste pola są zwracane jako

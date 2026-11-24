@@ -90,7 +90,7 @@ class MCPTests(unittest.TestCase):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools = await session.list_tools()
-                    self.assertEqual({tool.name for tool in tools.tools}, {'attach_draft_attachment', 'detach_draft_attachment', 'get_client_ai_context', 'list_clients', 'list_client_attachments', 'list_conversations', 'get_conversation', 'read_attachment', 'list_draft_attachments', 'create_reply_draft', 'update_reply_draft', 'send_reply_draft', 'get_clients_summary', 'get_conversations_summary', 'list_salesmen', 'list_calendar_events', 'list_salesman_absences', 'get_calendar_summary', 'get_salesman_availability', 'create_calendar_event', 'reschedule_calendar_event', 'record_call_result'})
+                    self.assertEqual({tool.name for tool in tools.tools}, {'get_reply_prompts', 'attach_draft_attachment', 'detach_draft_attachment', 'get_client_ai_context', 'list_clients', 'list_client_attachments', 'list_conversations', 'get_conversation', 'read_attachment', 'list_draft_attachments', 'create_reply_draft', 'update_reply_draft', 'send_reply_draft', 'get_clients_summary', 'get_conversations_summary', 'list_salesmen', 'list_calendar_events', 'list_salesman_absences', 'get_calendar_summary', 'get_salesman_availability', 'create_calendar_event', 'reschedule_calendar_event', 'record_call_result'})
                     send_tool = next(tool for tool in tools.tools if tool.name == 'send_reply_draft')
                     self.assertEqual(set(send_tool.inputSchema['required']), {'client_id', 'email', 'draft_id'})
                     result = await session.call_tool('list_clients', {})
