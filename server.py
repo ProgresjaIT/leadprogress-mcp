@@ -148,7 +148,7 @@ def _list_clients(query: str | None = None, salesman: str | None = None) -> list
     ):
         raise ToolError('Unexpected /api/statistics response format.')
     fields = (
-        'description', 'client_type', 'salesman',
+        'description', 'client_type', 'salesman', 'imap_user',
         'sent_total', 'interested_total', 'hasUncheckedErrors',
         'pending_questions', 'pending_sales_call', 'pending_sales_call_scheduled',
     )
@@ -215,6 +215,7 @@ def _page(rows: list[dict], limit: int, offset: int) -> dict:
 def list_clients(limit: int = 25, offset: int = 0,
                  query: str | None = None, salesman: str | None = None) -> dict:
     """List active, running, unpaused clients; client_id can be used as mailbox ID.
+    imap_user: sending mailbox email address, or null when unavailable.
     query: name substring; salesman: exact name, both case-insensitive.
     Returns items, total after filters, returned, next_offset. limit 1-100 (default 25).
     Pass next_offset as offset with unchanged filters; null means done. Use summary for counts."""

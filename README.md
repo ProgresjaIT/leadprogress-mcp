@@ -9,8 +9,9 @@ Wspólna blokada chroni sesję przed równoczesnym logowaniem. Klient zamyka si�
 przy zakończeniu procesu. Zmiana `.env` wymaga restartu serwera MCP.
 
 `list_clients` zwraca stronę wyłącznie aktywnych, uruchomionych i niewstrzymanych klientów w `items`:
-`client_id`, `username`, `description`, `client_type`, `salesman`, `sent_total`,
+`client_id`, `username`, `description`, `client_type`, `salesman`, `imap_user`, `sent_total`,
 `interested_total`, `hasUncheckedErrors` oraz liczniki ikon, w kolejności nazwy i ID.
+`imap_user` to adres skrzynki wysyłkowej z konfiguracji poczty klienta; brak wartości w API daje `null`.
 Nowe narzędzia odczytujące API mogą wywoływać `get_json('/api/...')`.
 
 Pusta odpowiedź API daje `items: []` i `total: 0` (może również oznaczać brak cache statystyk w aplikacji).
